@@ -29,36 +29,6 @@ echo "Creating .git-hooks directory..."
 mkdir -p ~/.git-hooks
 echo ".git-hooks directory created."
 
-echo "Writing .gitleaks.toml configuration..."
-cat << 'TOML' > ~/.gitleaks.toml
-title = "Gitleaks configuration"
-
-[extend]
-# Extend the base configuration if needed
-# useDefault = true
-
-[[rules]]
-id = "hardcoded-password"
-description = "Detects hardcoded passwords"
-regex = '''password\s*=\s*.+'''
-keywords = ["password"]
-
-[[rules]]
-id = "generic-api-key"
-description = "Generic API Key"
-regex = '''(?i)(api[_-]?key|apikey)\s*[=:]\s*['"]?[a-z0-9]{20,}['"]?'''
-keywords = ["api_key", "apikey"]
-
-[allowlist]
-description = "Allowlist for common false positives"
-regexes = [
-  '''password\s*=\s*['"]?\*+['"]?''',  # Masked passwords
-  '''password\s*=\s*['"]?example['"]?''',  # Example passwords
-  '''password\s*=\s*['"]?test['"]?''',  # Test passwords
-]
-TOML
-echo ".gitleaks.toml created."
-
 echo "Configuring git to use custom hooks path..."
 git config --global core.hooksPath ~/.git-hooks
 echo "Git hooks path configured."
@@ -67,7 +37,7 @@ echo "Writing pre-commit hook file..."
 cat << EOF > ~/.git-hooks/pre-commit
 #!/bin/sh
 
-$GITLEAKS_CMD protect --staged --config ~/.gitleaks.toml -v
+$GITLEAKS_CMD protect --staged -v
 EOF
 echo "pre-commit file created."
 

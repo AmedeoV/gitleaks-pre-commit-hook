@@ -28,15 +28,15 @@ Gitleaks should detect the fake secret, and the pre-commit hook will block the c
 
 ```
 Finding:     password="fakePassword123"
-Secret:      password="fakePassword123"
-RuleID:      hardcoded-password
-Entropy:     3.251629
+Secret:      "fakePassword123"
+RuleID:      hashicorp-tf-password
+Entropy:     3.734522
 File:        fake_secret.txt
 Line:        1
-Commit:      (staged changes)
+Fingerprint: fake_secret.txt:hashicorp-tf-password:1
 
 1 commits scanned.
-1 leaks detected.
+1 leaks found.
 ```
 
 This confirms that the pre-commit hook is working. Remember to remove the fake password/key after testing.
@@ -69,11 +69,8 @@ The pre-commit hook is configured to **fail the commit for any secrets** detecte
 
 ### Gitleaks configuration
 
-A Gitleaks configuration file is placed at `~/.gitleaks.toml`. You can modify it following the [Gitleaks documentation](https://github.com/gitleaks/gitleaks#configuration). This should allow adjusting the sensitivity and configuring other parameters to suit your needs. For instance, you can add patterns to the allowlist for false positives or customize detection rules.
+By default, this setup uses Gitleaks' comprehensive built-in rules which detect 100+ types of secrets including AWS keys, GitHub tokens, Slack tokens, private keys, and many more.
 
-The default configuration includes:
-- Detection of hardcoded passwords
-- Detection of generic API keys
-- Allowlist for common false positives (masked passwords, example/test passwords)
+If you need to customize the behavior, you can create a `.gitleaks.toml` file in your home directory (`~/.gitleaks.toml`) and the hook will automatically use it. Follow the [Gitleaks documentation](https://github.com/gitleaks/gitleaks#configuration) to configure custom rules, allowlists for false positives, or adjust detection sensitivity.
 
-You can extend the configuration with additional rules or modify existing ones based on your security requirements.
+You can also create repository-specific configurations by adding a `.gitleaks.toml` file to your project root.
