@@ -19,7 +19,7 @@ curl -sSL https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/ref
 To test the precommit hook, you can attempt to commit a change with a fake secret. Try this in an existing git repository:
 
 ```bash
-echo 'password="fakePassword123"' > fake_secret.txt
+echo 'slack_token=xoxb-1234567890-1234567890123-AbCdEfGh1234567890123456' > fake_secret.txt
 git add fake_secret.txt
 git commit -m "Add fake secret for testing"
 ```
@@ -27,19 +27,24 @@ git commit -m "Add fake secret for testing"
 Gitleaks should detect the fake secret, and the pre-commit hook will block the commit. You will see an error message similar to:
 
 ```
-Finding:     password="fakePassword123"
-Secret:      "fakePassword123"
-RuleID:      hashicorp-tf-password
-Entropy:     3.734522
+Finding:     xoxb-1234567890-1234567890123-AbCdEfGh1234567890123456
+Secret:      xoxb-1234567890-1234567890123-AbCdEfGh1234567890123456
+RuleID:      slack-bot-token
+Entropy:     4.151122
 File:        fake_secret.txt
 Line:        1
-Fingerprint: fake_secret.txt:hashicorp-tf-password:1
+Fingerprint: fake_secret.txt:slack-bot-token:1
 
-1 commits scanned.
-1 leaks found.
+0 commits scanned.
+scanned ~55 bytes (55 bytes)
+leaks found: 1
 ```
 
-This confirms that the pre-commit hook is working. Remember to remove the fake password/key after testing.
+This confirms that the pre-commit hook is working. Remember to remove the fake secret after testing:
+
+```bash
+rm fake_secret.txt
+```
 
 ### Bypassing the Pre-Commit Hook
 
