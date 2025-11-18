@@ -78,18 +78,16 @@ else
         local url=$1
         local output=$2
         
-        # On Windows (Git Bash), prioritize PowerShell
-        if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-          echo "Downloading using PowerShell..."
-          $POWERSHELL_CMD -Command "Invoke-WebRequest -Uri '$url' -OutFile '$output'" 2>/dev/null
-          return $?
-        elif command -v curl &> /dev/null; then
+        if command -v curl &> /dev/null; then
           curl -sSfL "$url" -o "$output"
         elif command -v wget &> /dev/null; then
           wget -q "$url" -O "$output"
         elif [[ -n "$POWERSHELL_CMD" ]]; then
-          # Use PowerShell on Windows as fallback
-          $POWERSHELL_CMD -Command "Invoke-WebRequest -Uri '$url' -OutFile '$output'" 2>/dev/null
+          # Use PowerShell - need to ensure output path exists and is accessible
+          echo "Downloading using PowerShell..."
+          # Ensure parent directory exists
+          mkdir -p "$(dirname "$output")" 2>/dev/null || true
+          $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$output'" 2>/dev/null
           return $?
         else
           echo "Error: No download tool available (curl, wget, or PowerShell)"
@@ -219,21 +217,25 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
       fi
       
       mkdir -p "$WIN_INSTALL_DIR"
+      mkdir -p /tmp 2>/dev/null || true
       
       echo "Downloading Gitleaks $LATEST_VERSION for Windows..."
-      if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-        $POWERSHELL_CMD -Command "Invoke-WebRequest -Uri 'https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip' -OutFile '/tmp/gitleaks-win.zip'" 2>/dev/null
-      elif command -v curl &> /dev/null; then
+      if command -v curl &> /dev/null; then
         curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip" -o /tmp/gitleaks-win.zip
       elif command -v wget &> /dev/null; then
         wget -q "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip" -O /tmp/gitleaks-win.zip
       elif [[ -n "$POWERSHELL_CMD" ]]; then
-        $POWERSHELL_CMD -Command "Invoke-WebRequest -Uri 'https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip' -OutFile '/tmp/gitleaks-win.zip'" 2>/dev/null
+        $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip' -OutFile '/tmp/gitleaks-win.zip'" 2>/dev/null
       fi
       
-      unzip -q /tmp/gitleaks-win.zip -d /tmp/gitleaks-win/
-      mv /tmp/gitleaks-win/gitleaks.exe "$WIN_INSTALL_DIR/" 2>/dev/null || cp /tmp/gitleaks-win/gitleaks.exe "$WIN_INSTALL_DIR/"
-      rm -rf /tmp/gitleaks-win.zip /tmp/gitleaks-win/
+      if [[ -f /tmp/gitleaks-win.zip ]]; then
+        mkdir -p /tmp/gitleaks-win
+        unzip -q /tmp/gitleaks-win.zip -d /tmp/gitleaks-win/
+        mv /tmp/gitleaks-win/gitleaks.exe "$WIN_INSTALL_DIR/" 2>/dev/null || cp /tmp/gitleaks-win/gitleaks.exe "$WIN_INSTALL_DIR/"
+        rm -rf /tmp/gitleaks-win.zip /tmp/gitleaks-win/
+      else
+        echo "Warning: Failed to download gitleaks for Windows"
+      fi
       
       echo "Gitleaks installed to Windows at: $WIN_INSTALL_DIR/gitleaks.exe"
       echo "Note: You may need to add %USERPROFILE%\\bin to your Windows PATH"
