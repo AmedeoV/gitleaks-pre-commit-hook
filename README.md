@@ -63,6 +63,31 @@ If you are using JetBrains Rider to commit your code and wish to bypass Git comm
 
 ## Additional information
 
+### Updating Gitleaks
+
+To update Gitleaks to the latest version, simply re-run the installation script:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/refs/heads/main/gitleaks-local-git-pre-hook.sh | bash
+```
+
+Alternatively, you can update manually based on your OS:
+
+**macOS (Homebrew):**
+```bash
+brew upgrade gitleaks
+```
+
+**Linux/Windows (using the installation script):**
+```bash
+curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | sh -s -- -b ~/.local/bin
+```
+
+You can check your current version with:
+```bash
+gitleaks version
+```
+
 ### Handling Unverified/Unknown Issues
 
 The pre-commit hook is configured to **fail the commit for any secrets** detected by Gitleaks, as a failsafe approach. The intention is to ensure the committer reviews any findings before proceeding.
