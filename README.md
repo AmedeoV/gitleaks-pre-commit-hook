@@ -101,6 +101,83 @@ The pre-commit hook is configured to **fail the commit for any secrets** detecte
 
 By default, this setup uses Gitleaks' comprehensive built-in rules which detect 100+ types of secrets including AWS keys, GitHub tokens, Slack tokens, private keys, and many more.
 
-If you need to customize the behavior, you can create a `.gitleaks.toml` file in your home directory (`~/.gitleaks.toml`) and the hook will automatically use it. Follow the [Gitleaks documentation](https://github.com/gitleaks/gitleaks#configuration) to configure custom rules, allowlists for false positives, or adjust detection sensitivity.
+#### Global Custom Configuration
 
-You can also create repository-specific configurations by adding a `.gitleaks.toml` file to your project root.
+**The installation script automatically creates two configuration files** in your home directory:
+
+1. **`~/.gitleaks.toml`** - Main configuration that extends default gitleaks rules
+2. **`~/.gitleaks-custom-rules.toml`** - Your custom detection rules (easy to edit and expand!)
+
+This means **you don't need to copy any configuration files to your repositories** - the enhanced detection works everywhere automatically!
+
+#### Adding Custom Rules
+
+To add or modify custom detection rules, edit `~/.gitleaks-custom-rules.toml`:
+
+```bash
+# Linux/Mac/WSL
+nano ~/.gitleaks-custom-rules.toml
+
+# Windows PowerShell
+notepad $HOME\.gitleaks-custom-rules.toml
+```
+
+After editing, **re-run the installation script** to regenerate `~/.gitleaks.toml` with your updated rules:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/refs/heads/main/gitleaks-local-git-pre-hook.sh | bash
+```
+
+Or manually append your new rules:
+
+```bash
+cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
+```
+
+The custom rules file already includes:
+- Database connection string detection
+- Generic password pattern detection
+- API key and token detection
+
+**Example: Adding a new rule**
+
+Add this to `~/.gitleaks-custom-rules.toml`:
+
+```toml
+[[rules]]
+id = "my-custom-secret"
+description = "Detects my custom secret pattern"
+regex = '''your-regex-pattern-here'''
+tags = ["custom", "secret"]
+
+[[rules.Entropies]]
+Min = "3.0"
+Max = "8"
+```
+
+Then re-run the installation script to apply the changes to all repositories.
+
+#### Configuration Priority
+
+The pre-commit hook uses the following priority order:
+
+1. **Repository-specific** `.gitleaks.toml` (in repository root) - if present
+2. **Global** `~/.gitleaks.toml` + `~/.gitleaks-custom-rules.toml` (in your home directory) - created by the installation script
+3. **Default** gitleaks rules - if no configuration files exist
+
+This allows you to:
+- Use the global configuration for most repositories (no setup needed)
+- Override with repository-specific rules when needed (just add `.gitleaks.toml` to that repo)
+- Easily maintain and expand your custom rules in one place
+
+#### Configuration Files Structure
+
+```
+~/.gitleaks.toml                    # Main config (extends defaults + contains custom rules)
+~/.gitleaks-custom-rules.toml       # Template for custom rules (edit this, then re-run installer)
+~/.git-hooks/pre-commit             # Pre-commit hook that uses the config
+```
+
+The installation script generates `~/.gitleaks.toml` by combining default rules with your custom rules from `~/.gitleaks-custom-rules.toml`.
+
+For more configuration options, see the [Gitleaks documentation](https://github.com/gitleaks/gitleaks#configuration).

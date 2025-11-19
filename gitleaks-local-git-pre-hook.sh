@@ -144,15 +144,101 @@ echo "Configuring git to use custom hooks path..."
 git config --global core.hooksPath ~/.git-hooks
 echo "Git hooks path configured."
 
+echo "Creating custom rules file..."
+cat << 'EOFCUSTOM' > ~/.gitleaks-custom-rules.toml
+# Custom Gitleaks Rules
+# This file contains additional detection rules beyond the default gitleaks rules
+# After editing this file, run: cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
+# Or simply re-run the installation script to regenerate with your custom rules
+
+# Custom rule for database connection strings with passwords
+[[rules]]
+id = "database-connection-string"
+description = "Detects database connection strings containing passwords (MySQL, PostgreSQL, SQL Server, etc.)"
+regex = '''(?i)(server|host|data source|datasource)\s*=\s*[^;]+;\s*(port\s*=\s*[^;]+;\s*)?(database|initial catalog|db)\s*=\s*[^;]+;\s*(user id|uid|username|user)\s*=\s*[^;]+;\s*(password|pwd)\s*=\s*[^;\s"']{3,}'''
+tags = ["database", "connection-string", "password"]
+
+[[rules.Entropies]]
+Min = "2.5"
+Max = "8"
+
+# Additional rule for generic password assignments
+[[rules]]
+id = "password-in-connection-string"
+description = "Detects Pwd= or Password= with values in connection strings"
+regex = '''(?i)(password|pwd)\s*=\s*["']?[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};:,.<>?/\\|`~]{8,}["']?'''
+tags = ["password", "credentials"]
+
+[[rules.Entropies]]
+Min = "2.0"
+Max = "8"
+
+# Rule for generic API keys and secrets
+[[rules]]
+id = "generic-api-key"
+description = "Detects generic API keys, secrets, and tokens"
+regex = '''(?i)(api[_-]?key|api[_-]?secret|access[_-]?token|secret[_-]?key|private[_-]?key)\s*[=:]\s*["']?[a-zA-Z0-9_\-]{16,}["']?'''
+tags = ["api-key", "token", "secret"]
+
+[[rules.Entropies]]
+Min = "3.0"
+Max = "8"
+
+# Add more custom rules below this line
+# Example template:
+# [[rules]]
+# id = "my-custom-rule"
+# description = "Description of what this rule detects"
+# regex = '''your-regex-pattern-here'''
+# tags = ["tag1", "tag2"]
+EOFCUSTOM
+echo "Custom rules template created at ~/.gitleaks-custom-rules.toml"
+
+echo "Creating global gitleaks configuration..."
+cat << 'EOFCONFIG' > ~/.gitleaks.toml
+# Global Gitleaks Configuration
+# This file uses the default gitleaks rules plus custom rules defined below
+
+[extend]
+# Use the default gitleaks rules as a base
+useDefault = true
+
+# ============================================================================
+# CUSTOM RULES SECTION
+# ============================================================================
+# The rules below are loaded from ~/.gitleaks-custom-rules.toml
+# To add or modify custom rules, edit ~/.gitleaks-custom-rules.toml
+# Then re-run the installation script or manually append the rules here
+# ============================================================================
+
+EOFCONFIG
+
+# Append custom rules to the main config
+cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
+
+echo "Global gitleaks configuration created at ~/.gitleaks.toml (includes custom rules)"
+
 echo "Writing pre-commit hook file..."
 cat << 'EOF' > ~/.git-hooks/pre-commit
 #!/bin/sh
 
+# Get the root directory of the git repository
+GIT_ROOT=$(git rev-parse --show-toplevel)
+
+# Priority: Repository config > Global config
+if [ -f "$GIT_ROOT/.gitleaks.toml" ]; then
+    CONFIG_FLAG="--config=$GIT_ROOT/.gitleaks.toml"
+elif [ -f "$HOME/.gitleaks.toml" ]; then
+    CONFIG_FLAG="--config=$HOME/.gitleaks.toml"
+else
+    CONFIG_FLAG=""
+fi
+
 # Try to run gitleaks from PATH first (works in both WSL and Windows)
 if command -v gitleaks > /dev/null 2>&1; then
-    gitleaks protect -v --staged
+    gitleaks protect -v --staged $CONFIG_FLAG
 elif command -v gitleaks.exe > /dev/null 2>&1; then
-    gitleaks.exe protect -v --staged
+    gitleaks.exe protect -v --staged $CONFIG_FLAG
 else
     echo "Error: gitleaks not found in PATH"
     echo "Please ensure gitleaks is installed and accessible from your terminal"
