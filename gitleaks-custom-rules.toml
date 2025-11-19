@@ -25,6 +25,50 @@ tags = ["password", "credentials"]
 Min = "2.0"
 Max = "8"
 
+# Rule for Redis connection strings with passwords
+[[rules]]
+id = "redis-connection-string"
+description = "Detects Redis connection strings with passwords (redis://, rediss://)"
+regex = '''redis(?:s)?://(?:[^:@]+:)?([^@\s'"]{8,})@[\w\.\-]+(?::\d+)?(?:/\d+)?'''
+tags = ["redis", "connection-string", "password"]
+
+[[rules.Entropies]]
+Min = "2.5"
+Max = "8"
+
+# Rule for MongoDB connection strings with passwords
+[[rules]]
+id = "mongodb-connection-string"
+description = "Detects MongoDB connection strings with passwords (mongodb://, mongodb+srv://)"
+regex = '''mongodb(?:\+srv)?://(?:[^:]+):([^@\s'"]{8,})@[\w\.\-,]+(?::\d+)?(?:/[\w\-]+)?(?:\?[\w=&]+)?'''
+tags = ["mongodb", "connection-string", "password"]
+
+[[rules.Entropies]]
+Min = "2.5"
+Max = "8"
+
+# Rule for PostgreSQL connection strings with passwords
+[[rules]]
+id = "postgresql-connection-string"
+description = "Detects PostgreSQL connection strings with passwords (postgres://, postgresql://)"
+regex = '''postgres(?:ql)?://(?:[^:]+):([^@\s'"]{8,})@[\w\.\-]+(?::\d+)?(?:/[\w\-]+)?(?:\?[\w=&]+)?'''
+tags = ["postgresql", "connection-string", "password"]
+
+[[rules.Entropies]]
+Min = "2.5"
+Max = "8"
+
+# Rule for MySQL connection strings with passwords (mysql://)
+[[rules]]
+id = "mysql-connection-string"
+description = "Detects MySQL connection strings with passwords (mysql://)"
+regex = '''mysql://(?:[^:]+):([^@\s'"]{8,})@[\w\.\-]+(?::\d+)?(?:/[\w\-]+)?(?:\?[\w=&]+)?'''
+tags = ["mysql", "connection-string", "password"]
+
+[[rules.Entropies]]
+Min = "2.5"
+Max = "8"
+
 # Rule for generic API keys and secrets
 [[rules]]
 id = "generic-api-key"
