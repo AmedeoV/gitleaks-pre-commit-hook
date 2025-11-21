@@ -183,7 +183,12 @@ mkdir -p ~/.git-hooks
 echo ".git-hooks directory created."
 
 echo "Configuring git to use custom hooks path..."
-git config --global core.hooksPath ~/.git-hooks
+# Use git.exe in Git Bash/Windows environments for reliability
+if command -v git.exe &> /dev/null; then
+  git.exe config --global core.hooksPath ~/.git-hooks
+elif command -v git &> /dev/null; then
+  git config --global core.hooksPath ~/.git-hooks
+fi
 echo "Git hooks path configured."
 
 echo "Downloading custom rules file from GitHub..."
@@ -360,8 +365,14 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
   else
     # We're in Git Bash or MSYS - ensure hooks path is set correctly
     # Even though it was set in main setup, verify and set again to be safe
-    git config --global core.hooksPath ~/.git-hooks
-    echo "Git Bash/MSYS environment - hooks path verified and set to: $(git config --global core.hooksPath)"
+    if command -v git.exe &> /dev/null; then
+      git.exe config --global core.hooksPath ~/.git-hooks
+      HOOKS_PATH=$(git.exe config --global core.hooksPath)
+    elif command -v git &> /dev/null; then
+      git config --global core.hooksPath ~/.git-hooks
+      HOOKS_PATH=$(git config --global core.hooksPath)
+    fi
+    echo "Git Bash/MSYS environment - hooks path verified and set to: $HOOKS_PATH"
   fi
   
   # Ensure Windows can execute the hook by also creating a .bat wrapper if needed
