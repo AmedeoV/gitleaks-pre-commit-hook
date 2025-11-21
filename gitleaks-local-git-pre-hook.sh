@@ -188,7 +188,14 @@ echo "Configuring git to use custom hooks path..."
 if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
   # Git Bash - use PowerShell to set the config
   HOOKS_PATH="$HOME/.git-hooks"
-  $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'" 2>/dev/null
+  $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'"
+  # Verify it was set
+  sleep 0.5
+  VERIFY=$($POWERSHELL_CMD -Command "git config --global core.hooksPath" 2>/dev/null | tr -d '\r')
+  if [[ -z "$VERIFY" ]]; then
+    echo "Warning: Failed to set hooks path via PowerShell, trying git.exe..."
+    git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
+  fi
 elif command -v git.exe &> /dev/null; then
   git.exe config --global core.hooksPath ~/.git-hooks
 elif command -v git &> /dev/null; then
@@ -371,10 +378,16 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
     # We're in Git Bash or MSYS - use PowerShell for reliability
     HOOKS_PATH="$HOME/.git-hooks"
     if [[ -n "$POWERSHELL_CMD" ]]; then
-      $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'" 2>/dev/null
+      $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'"
+      sleep 0.5
       VERIFY_PATH=$($POWERSHELL_CMD -Command "git config --global core.hooksPath" 2>/dev/null | tr -d '\r')
+      if [[ -z "$VERIFY_PATH" ]]; then
+        echo "Warning: PowerShell method failed, trying git.exe..."
+        git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
+        VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || git config --global core.hooksPath || echo "$HOOKS_PATH")
+      fi
     elif command -v git.exe &> /dev/null; then
-      git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null
+      git.exe config --global core.hooksPath "$HOOKS_PATH"
       VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || echo "")
     elif command -v git &> /dev/null; then
       git config --global core.hooksPath "$HOOKS_PATH"
