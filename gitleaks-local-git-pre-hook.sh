@@ -183,13 +183,12 @@ mkdir -p ~/.git-hooks
 echo ".git-hooks directory created."
 
 echo "Configuring git to use custom hooks path..."
-# For Git Bash/Windows, we need to ensure the path is in Windows format
-# Git on Windows understands both Unix and Windows paths, but we'll use the proper format
-if [[ "$OSTYPE" == "msys" ]] && command -v git.exe &> /dev/null; then
-  # Git Bash - use Windows-style path with forward slashes
+# For Git Bash/Windows, use PowerShell to set git config for reliability
+# git.exe from bash doesn't always work correctly with global config
+if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
+  # Git Bash - use PowerShell to set the config
   HOOKS_PATH="$HOME/.git-hooks"
-  git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || \
-    git config --global core.hooksPath "$HOOKS_PATH"
+  $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'" 2>/dev/null
 elif command -v git.exe &> /dev/null; then
   git.exe config --global core.hooksPath ~/.git-hooks
 elif command -v git &> /dev/null; then
@@ -369,10 +368,12 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
       echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
     fi
   else
-    # We're in Git Bash or MSYS - ensure hooks path is set correctly
-    # Use explicit path to avoid tilde expansion issues
+    # We're in Git Bash or MSYS - use PowerShell for reliability
     HOOKS_PATH="$HOME/.git-hooks"
-    if command -v git.exe &> /dev/null; then
+    if [[ -n "$POWERSHELL_CMD" ]]; then
+      $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'" 2>/dev/null
+      VERIFY_PATH=$($POWERSHELL_CMD -Command "git config --global core.hooksPath" 2>/dev/null | tr -d '\r')
+    elif command -v git.exe &> /dev/null; then
       git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null
       VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || echo "")
     elif command -v git &> /dev/null; then
