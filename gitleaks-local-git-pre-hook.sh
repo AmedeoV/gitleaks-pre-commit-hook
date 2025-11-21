@@ -358,9 +358,10 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
       echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
     fi
   else
-    # We're in Git Bash or MSYS - hooks path already configured in main setup above
-    # Git Bash's git command uses the path that was set earlier: ~/.git-hooks
-    echo "Git Bash/MSYS environment - hooks path already configured"
+    # We're in Git Bash or MSYS - ensure hooks path is set correctly
+    # Even though it was set in main setup, verify and set again to be safe
+    git config --global core.hooksPath ~/.git-hooks
+    echo "Git Bash/MSYS environment - hooks path verified and set to: $(git config --global core.hooksPath)"
   fi
   
   # Ensure Windows can execute the hook by also creating a .bat wrapper if needed
