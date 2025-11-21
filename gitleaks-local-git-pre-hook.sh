@@ -115,12 +115,29 @@ configure_hooks_path(){
   local target="$hooks_dir"
   # Prefer Windows style if running in Git Bash or Windows native so PowerShell/CMD commits trigger hook.
   if $IS_MSYS || $IS_WINDOWS_NATIVE; then target="$win_path"; fi
-  if command -v git.exe &>/dev/null && ($IS_MSYS || $IS_WINDOWS_NATIVE); then
-    git.exe config --global core.hooksPath "$target" || warn "git.exe config failed"
+
+  # Robust Git detection (Git Bash sometimes exposes only git.exe; some PATH issues can occur).
+  local git_cmd=""
+  if command -v git &>/dev/null; then
+    git_cmd="git"
+  elif command -v git.exe &>/dev/null; then
+    git_cmd="git.exe"
   else
-    git config --global core.hooksPath "$target" || warn "git config failed"
+    # Attempt common fallback locations for Git for Windows
+    for g in "/mingw64/bin/git" "/usr/bin/git" "/c/Program Files/Git/cmd/git.exe" "/c/Program Files (x86)/Git/cmd/git.exe"; do
+      [[ -x "$g" ]] && { git_cmd="$g"; break; }
+    done
   fi
-  local confirm="$(git config --global core.hooksPath 2>/dev/null || true)"
+
+  if [[ -z "$git_cmd" ]]; then
+    warn "git not found on PATH; skipping hooksPath configuration"
+    return 0
+  fi
+
+  if ! "$git_cmd" config --global core.hooksPath "$target" 2>/dev/null; then
+    warn "$git_cmd config failed"
+  fi
+  local confirm="$("$git_cmd" config --global core.hooksPath 2>/dev/null || true)"
   if [[ -z "$confirm" ]]; then warn "hooksPath not readable after set"; else log "hooksPath set to: $confirm"; fi
 }
 
