@@ -77,11 +77,9 @@ The pre-commit hook is configured to **fail the commit for any secrets** detecte
 
 By default, this setup uses Gitleaks' comprehensive built-in rules which detect 100+ types of secrets including AWS keys, GitHub tokens, Slack tokens, private keys, and many more.
 
-#### Adding / Editing Custom Rules
+#### Adding Custom Rules
 
-Edit `~/.gitleaks-custom-rules.toml` to add or adjust patterns:
-
-After editing, you can simply re-run the installation script.
+To add or modify custom detection rules, edit `~/.gitleaks-custom-rules.toml`.
 
 **Example: Adding a new rule**
 
