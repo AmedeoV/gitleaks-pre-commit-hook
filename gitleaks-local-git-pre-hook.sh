@@ -254,7 +254,76 @@ cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
 echo "Global gitleaks configuration created at ~/.gitleaks.toml (includes custom rules)"
 
 echo "Writing pre-commit hook file..."
-cat << 'EOF' > ~/.git-hooks/pre-commit
+
+# For Windows environments, create a batch file that works from PowerShell/CMD
+if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ -n "$POWERSHELL_CMD" ]]; then
+  # Create Windows batch file as primary hook
+  cat << 'EOFBAT' > ~/.git-hooks/pre-commit.bat
+@echo off
+REM Git pre-commit hook - runs gitleaks to detect secrets
+
+REM Get the git repository root
+for /f "delims=" %%i in ('git rev-parse --show-toplevel') do set GIT_ROOT=%%i
+
+REM Check for repository-specific config, then global config
+if exist "%GIT_ROOT%\.gitleaks.toml" (
+    set CONFIG_FLAG=--config=%GIT_ROOT%\.gitleaks.toml
+) else if exist "%USERPROFILE%\.gitleaks.toml" (
+    set CONFIG_FLAG=--config=%USERPROFILE%\.gitleaks.toml
+) else (
+    set CONFIG_FLAG=
+)
+
+REM Run gitleaks
+where gitleaks.exe >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    gitleaks.exe protect -v --staged %CONFIG_FLAG%
+    exit /b %ERRORLEVEL%
+)
+
+where gitleaks >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    gitleaks protect -v --staged %CONFIG_FLAG%
+    exit /b %ERRORLEVEL%
+)
+
+echo Error: gitleaks not found in PATH
+echo Please ensure gitleaks is installed and accessible from your terminal
+exit /b 1
+EOFBAT
+
+  # Also create bash version for Git Bash compatibility
+  cat << 'EOFBASH' > ~/.git-hooks/pre-commit
+#!/bin/sh
+
+# Get the root directory of the git repository
+GIT_ROOT=$(git rev-parse --show-toplevel)
+
+# Priority: Repository config > Global config
+if [ -f "$GIT_ROOT/.gitleaks.toml" ]; then
+    CONFIG_FLAG="--config=$GIT_ROOT/.gitleaks.toml"
+elif [ -f "$HOME/.gitleaks.toml" ]; then
+    CONFIG_FLAG="--config=$HOME/.gitleaks.toml"
+else
+    CONFIG_FLAG=""
+fi
+
+# Try to run gitleaks from PATH first (works in both WSL and Windows)
+if command -v gitleaks > /dev/null 2>&1; then
+    gitleaks protect -v --staged $CONFIG_FLAG
+elif command -v gitleaks.exe > /dev/null 2>&1; then
+    gitleaks.exe protect -v --staged $CONFIG_FLAG
+else
+    echo "Error: gitleaks not found in PATH"
+    echo "Please ensure gitleaks is installed and accessible from your terminal"
+    exit 1
+fi
+EOFBASH
+
+  echo "pre-commit files created (both .bat and bash versions)."
+else
+  # For Linux/Mac, create standard bash hook
+  cat << 'EOF' > ~/.git-hooks/pre-commit
 #!/bin/sh
 
 # Get the root directory of the git repository
@@ -280,7 +349,8 @@ else
     exit 1
 fi
 EOF
-echo "pre-commit file created."
+  echo "pre-commit file created."
+fi
 
 echo "Setting pre-commit file as executable..."
 chmod +x ~/.git-hooks/pre-commit
@@ -397,13 +467,6 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
     fi
     echo "Git Bash/MSYS environment - hooks path verified and set to: ${VERIFY_PATH:-$HOOKS_PATH}"
   fi
-  
-  # Ensure Windows can execute the hook by also creating a .bat wrapper if needed
-  cat << 'EOFBAT' > ~/.git-hooks/pre-commit.bat
-@echo off
-bash "%~dp0pre-commit"
-EOFBAT
-  echo "Created Windows batch wrapper for compatibility."
 fi
 
 echo ""
