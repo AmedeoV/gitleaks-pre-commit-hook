@@ -183,8 +183,14 @@ mkdir -p ~/.git-hooks
 echo ".git-hooks directory created."
 
 echo "Configuring git to use custom hooks path..."
-# Use git.exe in Git Bash/Windows environments for reliability
-if command -v git.exe &> /dev/null; then
+# For Git Bash/Windows, we need to ensure the path is in Windows format
+# Git on Windows understands both Unix and Windows paths, but we'll use the proper format
+if [[ "$OSTYPE" == "msys" ]] && command -v git.exe &> /dev/null; then
+  # Git Bash - use Windows-style path with forward slashes
+  HOOKS_PATH="$HOME/.git-hooks"
+  git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || \
+    git config --global core.hooksPath "$HOOKS_PATH"
+elif command -v git.exe &> /dev/null; then
   git.exe config --global core.hooksPath ~/.git-hooks
 elif command -v git &> /dev/null; then
   git config --global core.hooksPath ~/.git-hooks
@@ -364,15 +370,16 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
     fi
   else
     # We're in Git Bash or MSYS - ensure hooks path is set correctly
-    # Even though it was set in main setup, verify and set again to be safe
+    # Use explicit path to avoid tilde expansion issues
+    HOOKS_PATH="$HOME/.git-hooks"
     if command -v git.exe &> /dev/null; then
-      git.exe config --global core.hooksPath ~/.git-hooks
-      HOOKS_PATH=$(git.exe config --global core.hooksPath)
+      git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null
+      VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || echo "")
     elif command -v git &> /dev/null; then
-      git config --global core.hooksPath ~/.git-hooks
-      HOOKS_PATH=$(git config --global core.hooksPath)
+      git config --global core.hooksPath "$HOOKS_PATH"
+      VERIFY_PATH=$(git config --global core.hooksPath || echo "")
     fi
-    echo "Git Bash/MSYS environment - hooks path verified and set to: $HOOKS_PATH"
+    echo "Git Bash/MSYS environment - hooks path verified and set to: ${VERIFY_PATH:-$HOOKS_PATH}"
   fi
   
   # Ensure Windows can execute the hook by also creating a .bat wrapper if needed
