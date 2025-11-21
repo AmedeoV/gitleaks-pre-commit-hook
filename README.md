@@ -103,16 +103,15 @@ By default, this setup uses Gitleaks' comprehensive built-in rules which detect 
 
 #### Global Custom Configuration
 
-**The installation script automatically creates two configuration files** in your home directory:
+The installer now uses a single user-maintained file: **`~/.gitleaks-custom-rules.toml`**.
 
-1. **`~/.gitleaks.toml`** - Main configuration that extends default gitleaks rules
-2. **`~/.gitleaks-custom-rules.toml`** - Your custom detection rules (easy to edit and expand!)
+Gitleaks runs with its built‑in default rules plus any custom rules you define in that file. The previously generated `~/.gitleaks.toml` aggregation file is no longer required and is considered legacy. If it exists it will still be honored, but you do not need to create or manage it.
 
-This means **you don't need to copy any configuration files to your repositories** - the enhanced detection works everywhere automatically!
+Because the hook uses global configuration, **you don't need to copy any configuration files into individual repositories**.
 
-#### Adding Custom Rules
+#### Adding / Editing Custom Rules
 
-To add or modify custom detection rules, edit `~/.gitleaks-custom-rules.toml`:
+Edit `~/.gitleaks-custom-rules.toml` to add or adjust patterns:
 
 ```bash
 # Linux/Mac/WSL
@@ -122,19 +121,13 @@ nano ~/.gitleaks-custom-rules.toml
 notepad $HOME\.gitleaks-custom-rules.toml
 ```
 
-After editing, **re-run the installation script** to regenerate `~/.gitleaks.toml` with your updated rules:
+After editing, you can simply re-run the installation script to ensure any legacy combined file (if still present) is refreshed, though this is optional now:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/refs/heads/main/gitleaks-local-git-pre-hook.sh | bash
 ```
 
-Or manually append your new rules:
-
-```bash
-cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
-```
-
-The custom rules file already includes:
+You no longer need to manually append anything; the hook reads the custom rules file directly (and defaults). The custom rules file already includes:
 - Database connection string detection
 - Generic password pattern detection
 - API key and token detection
@@ -159,25 +152,22 @@ Then re-run the installation script to apply the changes to all repositories.
 
 #### Configuration Priority
 
-The pre-commit hook uses the following priority order:
+Current resolution order:
 
-1. **Repository-specific** `.gitleaks.toml` (in repository root) - if present
-2. **Global** `~/.gitleaks.toml` + `~/.gitleaks-custom-rules.toml` (in your home directory) - created by the installation script
-3. **Default** gitleaks rules - if no configuration files exist
+1. (Legacy) Repository root `.gitleaks.toml` if present – for backward compatibility.
+2. (Legacy) Global `~/.gitleaks.toml` if present – still honored.
+3. Active custom rules in `~/.gitleaks-custom-rules.toml` merged with built‑in defaults.
+4. Built‑in Gitleaks defaults if no custom file exists.
 
-This allows you to:
-- Use the global configuration for most repositories (no setup needed)
-- Override with repository-specific rules when needed (just add `.gitleaks.toml` to that repo)
-- Easily maintain and expand your custom rules in one place
+For new setups you only need `~/.gitleaks-custom-rules.toml`. Add a repo-specific file only if you need an override.
 
-#### Configuration Files Structure
+#### File Overview
 
 ```
-~/.gitleaks.toml                    # Main config (extends defaults + contains custom rules)
-~/.gitleaks-custom-rules.toml       # Template for custom rules (edit this, then re-run installer)
-~/.git-hooks/pre-commit             # Pre-commit hook that uses the config
+~/.gitleaks-custom-rules.toml    # Your custom rules (edit this as needed)
+~/.git-hooks/pre-commit          # Global pre-commit hook invoking gitleaks
 ```
 
-The installation script generates `~/.gitleaks.toml` by combining default rules with your custom rules from `~/.gitleaks-custom-rules.toml`.
+If a legacy `~/.gitleaks.toml` exists it will be used automatically, but it is optional going forward.
 
-For more configuration options, see the [Gitleaks documentation](https://github.com/gitleaks/gitleaks#configuration).
+For advanced configuration options (e.g., excluding paths, customizing report formats), see the [Gitleaks documentation](https://github.com/gitleaks/gitleaks#configuration).
