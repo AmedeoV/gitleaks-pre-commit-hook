@@ -144,47 +144,21 @@ echo "Configuring git to use custom hooks path..."
 git config --global core.hooksPath ~/.git-hooks
 echo "Git hooks path configured."
 
-echo "Creating custom rules file..."
-cat << 'EOFCUSTOM' > ~/.gitleaks-custom-rules.toml
+echo "Downloading custom rules file from GitHub..."
+CUSTOM_RULES_URL="https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/main/gitleaks-custom-rules.toml"
+
+# Try to download the custom rules file
+if download_file "$CUSTOM_RULES_URL" ~/.gitleaks-custom-rules.toml; then
+  echo "Custom rules file downloaded successfully to ~/.gitleaks-custom-rules.toml"
+else
+  echo "Warning: Failed to download custom rules file from GitHub"
+  echo "Creating basic custom rules template as fallback..."
+  cat << 'EOFCUSTOM' > ~/.gitleaks-custom-rules.toml
 # Custom Gitleaks Rules
 # This file contains additional detection rules beyond the default gitleaks rules
-# After editing this file, run: cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
-# Or simply re-run the installation script to regenerate with your custom rules
+# After editing this file, re-run the installation script to regenerate ~/.gitleaks.toml
 
-# Custom rule for database connection strings with passwords
-[[rules]]
-id = "database-connection-string"
-description = "Detects database connection strings containing passwords (MySQL, PostgreSQL, SQL Server, etc.)"
-regex = '''(?i)(server|host|data source|datasource)\s*=\s*[^;]+;\s*(port\s*=\s*[^;]+;\s*)?(database|initial catalog|db)\s*=\s*[^;]+;\s*(user id|uid|username|user)\s*=\s*[^;]+;\s*(password|pwd)\s*=\s*[^;\s"']{3,}'''
-tags = ["database", "connection-string", "password"]
-
-[[rules.Entropies]]
-Min = "2.5"
-Max = "8"
-
-# Additional rule for generic password assignments
-[[rules]]
-id = "password-in-connection-string"
-description = "Detects Pwd= or Password= with values in connection strings"
-regex = '''(?i)(password|pwd)\s*=\s*["']?[a-zA-Z0-9!@#$%^&*()_+\-=\[\]{};:,.<>?/\\|`~]{8,}["']?'''
-tags = ["password", "credentials"]
-
-[[rules.Entropies]]
-Min = "2.0"
-Max = "8"
-
-# Rule for generic API keys and secrets
-[[rules]]
-id = "generic-api-key"
-description = "Detects generic API keys, secrets, and tokens"
-regex = '''(?i)(api[_-]?key|api[_-]?secret|access[_-]?token|secret[_-]?key|private[_-]?key)\s*[=:]\s*["']?[a-zA-Z0-9_\-]{16,}["']?'''
-tags = ["api-key", "token", "secret"]
-
-[[rules.Entropies]]
-Min = "3.0"
-Max = "8"
-
-# Add more custom rules below this line
+# Add your custom rules below this line
 # Example template:
 # [[rules]]
 # id = "my-custom-rule"
@@ -192,7 +166,8 @@ Max = "8"
 # regex = '''your-regex-pattern-here'''
 # tags = ["tag1", "tag2"]
 EOFCUSTOM
-echo "Custom rules template created at ~/.gitleaks-custom-rules.toml"
+  echo "Basic custom rules template created at ~/.gitleaks-custom-rules.toml"
+fi
 
 echo "Creating global gitleaks configuration..."
 cat << 'EOFCONFIG' > ~/.gitleaks.toml
