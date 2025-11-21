@@ -83,11 +83,42 @@ else
         elif command -v wget &> /dev/null; then
           wget -q "$url" -O "$output"
         elif [[ -n "$POWERSHELL_CMD" ]]; then
-          # Use PowerShell - need to ensure output path exists and is accessible
+          # Use PowerShell - convert Unix paths to Windows paths for PowerShell
           echo "Downloading using PowerShell..."
+          
+          # If output path starts with /tmp/, use Windows temp directory
+          if [[ "$output" == /tmp/* ]]; then
+            # Get Windows temp directory and convert to Unix path
+            WIN_TEMP=$($POWERSHELL_CMD -Command "Write-Output \$env:TEMP" 2>/dev/null | tr -d '\r')
+            if [[ -n "$WIN_TEMP" ]]; then
+              # Convert to Unix path if we have cygpath
+              if command -v cygpath &> /dev/null; then
+                UNIX_TEMP=$(cygpath -u "$WIN_TEMP")
+              else
+                # Fallback: manual conversion for common cases
+                UNIX_TEMP=$(echo "$WIN_TEMP" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
+              fi
+              
+              # Replace /tmp with actual temp directory
+              local basename=$(basename "$output")
+              output="$UNIX_TEMP/$basename"
+              mkdir -p "$(dirname "$output")" 2>/dev/null || true
+            fi
+          fi
+          
           # Ensure parent directory exists
           mkdir -p "$(dirname "$output")" 2>/dev/null || true
-          $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$output'" 2>/dev/null
+          
+          # Convert Unix path to Windows path for PowerShell
+          local win_output="$output"
+          if command -v cygpath &> /dev/null; then
+            win_output=$(cygpath -w "$output")
+          else
+            # Fallback: manual conversion
+            win_output=$(echo "$output" | sed 's|^/\([a-z]\)/|\U\1:/|' | sed 's|/|\\|g')
+          fi
+          
+          $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$win_output'" 2>/dev/null
           return $?
         else
           echo "Error: No download tool available (curl, wget, or PowerShell)"
@@ -97,9 +128,20 @@ else
       
       if [[ "$OS" == "windows" ]]; then
         download_file "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_${OS}_${ARCH}.zip" /tmp/gitleaks.zip
-        unzip -q /tmp/gitleaks.zip -d /tmp/
-        mv /tmp/gitleaks.exe "$INSTALL_DIR/"
-        rm /tmp/gitleaks.zip
+        unzip -o -q /tmp/gitleaks.zip -d /tmp/ gitleaks.exe 2>/dev/null || {
+          # Try with Windows temp if /tmp fails
+          WIN_TEMP=$($POWERSHELL_CMD -Command "Write-Output \$env:TEMP" 2>/dev/null | tr -d '\r' | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
+          if [[ -n "$WIN_TEMP" ]]; then
+            unzip -o -q "$WIN_TEMP/gitleaks.zip" -d "$WIN_TEMP/" gitleaks.exe
+            mv "$WIN_TEMP/gitleaks.exe" "$INSTALL_DIR/"
+            rm "$WIN_TEMP/gitleaks.zip" 2>/dev/null || true
+          fi
+        }
+        # If unzip succeeded in /tmp, move from there
+        if [[ -f /tmp/gitleaks.exe ]]; then
+          mv /tmp/gitleaks.exe "$INSTALL_DIR/"
+          rm /tmp/gitleaks.zip 2>/dev/null || true
+        fi
       else
         download_file "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_${OS}_${ARCH}.tar.gz" /tmp/gitleaks.tar.gz
         tar -xzf /tmp/gitleaks.tar.gz -C /tmp/
