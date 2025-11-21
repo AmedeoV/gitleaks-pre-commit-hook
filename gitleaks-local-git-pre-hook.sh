@@ -75,6 +75,27 @@ install_gitleaks(){
     return 0
   fi
   log "Installing gitleaks..."
+  
+  # On Windows, prefer winget if available and install to ~/bin
+  if [[ $IS_MSYS == true || $IS_WINDOWS_NATIVE == true ]]; then
+    if command -v winget.exe &>/dev/null || command -v winget &>/dev/null; then
+      log "Using winget to install gitleaks to ~/bin..."
+      local winget_cmd="winget"
+      command -v winget.exe &>/dev/null && winget_cmd="winget.exe"
+      local install_dir="$HOME/bin"
+      mkdir -p "$install_dir"
+      local win_install_dir=$(windows_path "$install_dir")
+      if $winget_cmd install gitleaks --location "$win_install_dir" --silent --accept-package-agreements --accept-source-agreements 2>&1 | grep -q "Successfully installed"; then
+        log "Gitleaks installed via winget to $install_dir"
+        [[ ":$PATH:" != *":$install_dir:"* ]] && export PATH="$PATH:$install_dir"
+        return 0
+      else
+        warn "winget install failed or gitleaks already installed; continuing with manual installation"
+      fi
+    fi
+  fi
+  
+  # Fallback to manual installation
   local arch="$(uname -m)"; case "$arch" in x86_64) arch="x64";; aarch64|arm64) arch="arm64";; *) die "Unsupported arch: $arch";; esac
   local latest=""
   if [[ -n "$POWERSHELL_CMD" && ( $IS_MSYS == true || $IS_WINDOWS_NATIVE == true ) ]]; then
