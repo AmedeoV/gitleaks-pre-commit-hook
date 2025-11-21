@@ -183,26 +183,35 @@ mkdir -p ~/.git-hooks
 echo ".git-hooks directory created."
 
 echo "Configuring git to use custom hooks path..."
-# For Git Bash/Windows, use PowerShell to set git config for reliability
-# git.exe from bash doesn't always work correctly with global config
-if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-  # Git Bash - use PowerShell with full path to git.exe
-  HOOKS_PATH="$HOME/.git-hooks"
+# Determine POSIX and Windows style paths for the hooks dir so Git works from both PowerShell/CMD and Git Bash
+HOOKS_PATH_POSIX="$HOME/.git-hooks"
+if command -v cygpath &> /dev/null; then
+  HOOKS_PATH_WIN=$(cygpath -w "$HOOKS_PATH_POSIX")\\  # cygpath outputs without trailing backslash; add one for consistency then remove double
+  HOOKS_PATH_WIN="${HOOKS_PATH_WIN%\\}"
+else
+  # Fallback attempt: translate /c/Users/name to C:/Users/name
+  HOOKS_PATH_WIN="${HOOKS_PATH_POSIX#/c/}"; HOOKS_PATH_WIN="C:/${HOOKS_PATH_WIN}"; HOOKS_PATH_WIN="${HOOKS_PATH_WIN//\//\\}"
+fi
+
+# Normalize Windows path to avoid mixed slashes
+HOOKS_PATH_WIN_NORMALIZED="${HOOKS_PATH_WIN//\//\\}"
+
+# Use Windows path for git config to ensure PowerShell/CMD commits trigger the hook; Git Bash will accept it too.
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
   GIT_EXE_PATH="C:\\Program Files\\Git\\cmd\\git.exe"
-  $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH'"
-  # Verify it was set
+  $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH_WIN_NORMALIZED'" 2>/dev/null
   sleep 0.5
   VERIFY=$($POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath" 2>/dev/null | tr -d '\r')
-  if [[ -z "$VERIFY" ]]; then
-    echo "Warning: Failed to set hooks path via PowerShell, trying git.exe directly from bash..."
-    "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
+  if [[ "$VERIFY" != "$HOOKS_PATH_WIN_NORMALIZED" ]]; then
+    echo "Warning: PowerShell config set failed (got '$VERIFY'). Retrying via git.exe directly..."
+    "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH_WIN_NORMALIZED" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH_WIN_NORMALIZED"
   fi
 elif command -v git.exe &> /dev/null; then
-  git.exe config --global core.hooksPath ~/.git-hooks
+  git.exe config --global core.hooksPath "$HOOKS_PATH_WIN_NORMALIZED"
 elif command -v git &> /dev/null; then
-  git config --global core.hooksPath ~/.git-hooks
+  git config --global core.hooksPath "$HOOKS_PATH_POSIX"
 fi
-echo "Git hooks path configured."
+echo "Git hooks path configured: $(git config --global core.hooksPath 2>/dev/null || echo "(unreadable)")"
 
 echo "Downloading custom rules file from GitHub..."
 CUSTOM_RULES_URL="https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/main/gitleaks-custom-rules.toml"
@@ -446,23 +455,28 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
       echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
     fi
   else
-    # We're in Git Bash or MSYS - use PowerShell with full git.exe path
-    HOOKS_PATH="$HOME/.git-hooks"
+    # Git Bash / MSYS path correction: ensure global config uses Windows style for PowerShell commits
+    HOOKS_PATH_POSIX="$HOME/.git-hooks"
+    if command -v cygpath &> /dev/null; then
+      HOOKS_PATH_WIN=$(cygpath -w "$HOOKS_PATH_POSIX")
+    else
+      HOOKS_PATH_WIN="${HOOKS_PATH_POSIX#/c/}"; HOOKS_PATH_WIN="C:/${HOOKS_PATH_WIN}"; HOOKS_PATH_WIN="${HOOKS_PATH_WIN//\//\\}"
+    fi
     GIT_EXE_PATH="C:\\Program Files\\Git\\cmd\\git.exe"
     if [[ -n "$POWERSHELL_CMD" ]]; then
-      $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH'"
+      $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH_WIN'"
       sleep 0.5
       VERIFY_PATH=$($POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath" 2>/dev/null | tr -d '\r')
-      if [[ -z "$VERIFY_PATH" ]]; then
-        echo "Warning: PowerShell method failed, trying git.exe directly from bash..."
-        "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
-        VERIFY_PATH=$("/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath 2>/dev/null || git config --global core.hooksPath || echo "$HOOKS_PATH")
+      if [[ "$VERIFY_PATH" != "$HOOKS_PATH_WIN" ]]; then
+        echo "Warning: PowerShell method failed (value '$VERIFY_PATH'), retrying via git.exe..."
+        "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH_WIN" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH_WIN"
+        VERIFY_PATH=$("/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath 2>/dev/null || git config --global core.hooksPath || echo "$HOOKS_PATH_WIN")
       fi
     elif command -v git.exe &> /dev/null; then
-      git.exe config --global core.hooksPath "$HOOKS_PATH"
+      git.exe config --global core.hooksPath "$HOOKS_PATH_WIN"
       VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || echo "")
     elif command -v git &> /dev/null; then
-      git config --global core.hooksPath "$HOOKS_PATH"
+      git config --global core.hooksPath "$HOOKS_PATH_WIN"
       VERIFY_PATH=$(git config --global core.hooksPath || echo "")
     fi
     echo "Git Bash/MSYS environment - hooks path verified and set to: ${VERIFY_PATH:-$HOOKS_PATH}"
