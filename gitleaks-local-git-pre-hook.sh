@@ -345,22 +345,22 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
     fi
   fi
   
-  # Convert Unix path to Windows path for the hooks directory
+  # Configure git hooks path based on environment
   if command -v wslpath &> /dev/null; then
-    # We're in WSL
+    # We're in WSL - need to configure Windows Git separately
     WINDOWS_HOOKS_PATH=$(wslpath -w ~/.git-hooks)
+    
+    if command -v git.exe &> /dev/null; then
+      git.exe config --global core.hooksPath "$WINDOWS_HOOKS_PATH"
+      echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
+    elif command -v powershell.exe &> /dev/null; then
+      powershell.exe -Command "git config --global core.hooksPath '$WINDOWS_HOOKS_PATH'"
+      echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
+    fi
   else
-    # We're in Git Bash or similar
-    WINDOWS_HOOKS_PATH=$(cygpath -w ~/.git-hooks 2>/dev/null || echo "$HOME/.git-hooks" | sed 's|^/c/|C:/|' | sed 's|/|\\|g')
-  fi
-  
-  # Try to configure Windows Git
-  if command -v git.exe &> /dev/null; then
-    git.exe config --global core.hooksPath "$WINDOWS_HOOKS_PATH"
-    echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
-  elif command -v powershell.exe &> /dev/null; then
-    powershell.exe -Command "git config --global core.hooksPath '$WINDOWS_HOOKS_PATH'"
-    echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
+    # We're in Git Bash or MSYS - hooks path already configured in main setup above
+    # Git Bash's git command uses the path that was set earlier: ~/.git-hooks
+    echo "Git Bash/MSYS environment - hooks path already configured"
   fi
   
   # Ensure Windows can execute the hook by also creating a .bat wrapper if needed
