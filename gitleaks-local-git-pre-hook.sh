@@ -186,15 +186,16 @@ echo "Configuring git to use custom hooks path..."
 # For Git Bash/Windows, use PowerShell to set git config for reliability
 # git.exe from bash doesn't always work correctly with global config
 if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-  # Git Bash - use PowerShell to set the config
+  # Git Bash - use PowerShell with full path to git.exe
   HOOKS_PATH="$HOME/.git-hooks"
-  $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'"
+  GIT_EXE_PATH="C:\\Program Files\\Git\\cmd\\git.exe"
+  $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH'"
   # Verify it was set
   sleep 0.5
-  VERIFY=$($POWERSHELL_CMD -Command "git config --global core.hooksPath" 2>/dev/null | tr -d '\r')
+  VERIFY=$($POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath" 2>/dev/null | tr -d '\r')
   if [[ -z "$VERIFY" ]]; then
-    echo "Warning: Failed to set hooks path via PowerShell, trying git.exe..."
-    git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
+    echo "Warning: Failed to set hooks path via PowerShell, trying git.exe directly from bash..."
+    "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
   fi
 elif command -v git.exe &> /dev/null; then
   git.exe config --global core.hooksPath ~/.git-hooks
@@ -375,16 +376,17 @@ if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd
       echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
     fi
   else
-    # We're in Git Bash or MSYS - use PowerShell for reliability
+    # We're in Git Bash or MSYS - use PowerShell with full git.exe path
     HOOKS_PATH="$HOME/.git-hooks"
+    GIT_EXE_PATH="C:\\Program Files\\Git\\cmd\\git.exe"
     if [[ -n "$POWERSHELL_CMD" ]]; then
-      $POWERSHELL_CMD -Command "git config --global core.hooksPath '$HOOKS_PATH'"
+      $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH'"
       sleep 0.5
-      VERIFY_PATH=$($POWERSHELL_CMD -Command "git config --global core.hooksPath" 2>/dev/null | tr -d '\r')
+      VERIFY_PATH=$($POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath" 2>/dev/null | tr -d '\r')
       if [[ -z "$VERIFY_PATH" ]]; then
-        echo "Warning: PowerShell method failed, trying git.exe..."
-        git.exe config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
-        VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || git config --global core.hooksPath || echo "$HOOKS_PATH")
+        echo "Warning: PowerShell method failed, trying git.exe directly from bash..."
+        "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH"
+        VERIFY_PATH=$("/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath 2>/dev/null || git config --global core.hooksPath || echo "$HOOKS_PATH")
       fi
     elif command -v git.exe &> /dev/null; then
       git.exe config --global core.hooksPath "$HOOKS_PATH"
