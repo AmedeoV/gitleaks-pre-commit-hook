@@ -1,5 +1,70 @@
 #!/bin/bash
 
+# Check for PowerShell availability on Windows (needed for downloads)
+POWERSHELL_CMD=""
+if command -v powershell.exe &> /dev/null; then
+  POWERSHELL_CMD="powershell.exe"
+elif command -v pwsh.exe &> /dev/null; then
+  POWERSHELL_CMD="pwsh.exe"
+elif [[ -f "/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
+  POWERSHELL_CMD="/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+elif [[ -f "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
+  POWERSHELL_CMD="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+fi
+
+# Global function to download files
+download_file() {
+  local url=$1
+  local output=$2
+  
+  if command -v curl &> /dev/null; then
+    curl -sSfL "$url" -o "$output"
+  elif command -v wget &> /dev/null; then
+    wget -q "$url" -O "$output"
+  elif [[ -n "$POWERSHELL_CMD" ]]; then
+    # Use PowerShell - convert Unix paths to Windows paths for PowerShell
+    echo "Downloading using PowerShell..."
+    
+    # If output path starts with /tmp/, use Windows temp directory
+    if [[ "$output" == /tmp/* ]]; then
+      # Get Windows temp directory and convert to Unix path
+      WIN_TEMP=$($POWERSHELL_CMD -Command "Write-Output \$env:TEMP" 2>/dev/null | tr -d '\r')
+      if [[ -n "$WIN_TEMP" ]]; then
+        # Convert to Unix path if we have cygpath
+        if command -v cygpath &> /dev/null; then
+          UNIX_TEMP=$(cygpath -u "$WIN_TEMP")
+        else
+          # Fallback: manual conversion for common cases
+          UNIX_TEMP=$(echo "$WIN_TEMP" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
+        fi
+        
+        # Replace /tmp with actual temp directory
+        local basename=$(basename "$output")
+        output="$UNIX_TEMP/$basename"
+        mkdir -p "$(dirname "$output")" 2>/dev/null || true
+      fi
+    fi
+    
+    # Ensure parent directory exists
+    mkdir -p "$(dirname "$output")" 2>/dev/null || true
+    
+    # Convert Unix path to Windows path for PowerShell
+    local win_output="$output"
+    if command -v cygpath &> /dev/null; then
+      win_output=$(cygpath -w "$output")
+    else
+      # Fallback: manual conversion
+      win_output=$(echo "$output" | sed 's|^/\([a-z]\)/|\U\1:/|' | sed 's|/|\\|g')
+    fi
+    
+    $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$win_output'" 2>/dev/null
+    return $?
+  else
+    echo "Error: No download tool available (curl, wget, or PowerShell)"
+    return 1
+  fi
+}
+
 # Check if gitleaks is already installed
 if command -v gitleaks &> /dev/null; then
     echo "Gitleaks is already installed."
@@ -32,18 +97,6 @@ else
         INSTALL_DIR="$HOME/bin"
       fi
       
-      # Check for PowerShell availability on Windows
-      POWERSHELL_CMD=""
-      if command -v powershell.exe &> /dev/null; then
-        POWERSHELL_CMD="powershell.exe"
-      elif command -v pwsh.exe &> /dev/null; then
-        POWERSHELL_CMD="pwsh.exe"
-      elif [[ -f "/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
-        POWERSHELL_CMD="/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-      elif [[ -f "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
-        POWERSHELL_CMD="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-      fi
-      
       # Get latest release version - prioritize PowerShell on Windows
       if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
         # On Git Bash/Windows, use PowerShell first
@@ -72,59 +125,6 @@ else
       
       # Download and install
       mkdir -p "$INSTALL_DIR"
-      
-      # Function to download file
-      download_file() {
-        local url=$1
-        local output=$2
-        
-        if command -v curl &> /dev/null; then
-          curl -sSfL "$url" -o "$output"
-        elif command -v wget &> /dev/null; then
-          wget -q "$url" -O "$output"
-        elif [[ -n "$POWERSHELL_CMD" ]]; then
-          # Use PowerShell - convert Unix paths to Windows paths for PowerShell
-          echo "Downloading using PowerShell..."
-          
-          # If output path starts with /tmp/, use Windows temp directory
-          if [[ "$output" == /tmp/* ]]; then
-            # Get Windows temp directory and convert to Unix path
-            WIN_TEMP=$($POWERSHELL_CMD -Command "Write-Output \$env:TEMP" 2>/dev/null | tr -d '\r')
-            if [[ -n "$WIN_TEMP" ]]; then
-              # Convert to Unix path if we have cygpath
-              if command -v cygpath &> /dev/null; then
-                UNIX_TEMP=$(cygpath -u "$WIN_TEMP")
-              else
-                # Fallback: manual conversion for common cases
-                UNIX_TEMP=$(echo "$WIN_TEMP" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
-              fi
-              
-              # Replace /tmp with actual temp directory
-              local basename=$(basename "$output")
-              output="$UNIX_TEMP/$basename"
-              mkdir -p "$(dirname "$output")" 2>/dev/null || true
-            fi
-          fi
-          
-          # Ensure parent directory exists
-          mkdir -p "$(dirname "$output")" 2>/dev/null || true
-          
-          # Convert Unix path to Windows path for PowerShell
-          local win_output="$output"
-          if command -v cygpath &> /dev/null; then
-            win_output=$(cygpath -w "$output")
-          else
-            # Fallback: manual conversion
-            win_output=$(echo "$output" | sed 's|^/\([a-z]\)/|\U\1:/|' | sed 's|/|\\|g')
-          fi
-          
-          $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$win_output'" 2>/dev/null
-          return $?
-        else
-          echo "Error: No download tool available (curl, wget, or PowerShell)"
-          return 1
-        fi
-      }
       
       if [[ "$OS" == "windows" ]]; then
         download_file "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_${OS}_${ARCH}.zip" /tmp/gitleaks.zip
