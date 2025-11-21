@@ -1,489 +1,205 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Check for PowerShell availability on Windows (needed for downloads)
-POWERSHELL_CMD=""
-if command -v powershell.exe &> /dev/null; then
-  POWERSHELL_CMD="powershell.exe"
-elif command -v pwsh.exe &> /dev/null; then
-  POWERSHELL_CMD="pwsh.exe"
-elif [[ -f "/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
-  POWERSHELL_CMD="/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-elif [[ -f "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
-  POWERSHELL_CMD="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-fi
+# ==========================================================
+# Gitleaks Global Pre-Commit Hook Installer (Simplified)
+# ==========================================================
+# Responsibilities:
+# 1. Install gitleaks if missing
+# 2. Create global config + custom rules template
+# 3. Configure a global hooksPath (Windows compatible)
+# 4. Write cross-platform hook (bash + optional .bat)
+# ==========================================================
 
-# Global function to download files
-download_file() {
-  local url=$1
-  local output=$2
-  
-  if command -v curl &> /dev/null; then
-    curl -sSfL "$url" -o "$output"
-  elif command -v wget &> /dev/null; then
-    wget -q "$url" -O "$output"
-  elif [[ -n "$POWERSHELL_CMD" ]]; then
-    # Use PowerShell - convert Unix paths to Windows paths for PowerShell
-    echo "Downloading using PowerShell..."
-    
-    # If output path starts with /tmp/, use Windows temp directory
-    if [[ "$output" == /tmp/* ]]; then
-      # Get Windows temp directory and convert to Unix path
-      WIN_TEMP=$($POWERSHELL_CMD -Command "Write-Output \$env:TEMP" 2>/dev/null | tr -d '\r')
-      if [[ -n "$WIN_TEMP" ]]; then
-        # Convert to Unix path if we have cygpath
-        if command -v cygpath &> /dev/null; then
-          UNIX_TEMP=$(cygpath -u "$WIN_TEMP")
-        else
-          # Fallback: manual conversion for common cases
-          UNIX_TEMP=$(echo "$WIN_TEMP" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
-        fi
-        
-        # Replace /tmp with actual temp directory
-        local basename=$(basename "$output")
-        output="$UNIX_TEMP/$basename"
-        mkdir -p "$(dirname "$output")" 2>/dev/null || true
-      fi
-    fi
-    
-    # Ensure parent directory exists
-    mkdir -p "$(dirname "$output")" 2>/dev/null || true
-    
-    # Convert Unix path to Windows path for PowerShell
-    local win_output="$output"
-    if command -v cygpath &> /dev/null; then
-      win_output=$(cygpath -w "$output")
-    else
-      # Fallback: manual conversion
-      win_output=$(echo "$output" | sed 's|^/\([a-z]\)/|\U\1:/|' | sed 's|/|\\|g')
-    fi
-    
-    $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$win_output'" 2>/dev/null
-    return $?
+# -------- Utility / Environment Detection --------
+log(){ printf "[gitleaks-install] %s\n" "$*"; }
+warn(){ printf "[gitleaks-install][WARN] %s\n" "$*"; }
+die(){ printf "[gitleaks-install][ERROR] %s\n" "$*"; exit 1; }
+
+OSTYPE_LOWER="${OSTYPE,,}" 2>/dev/null || OSTYPE_LOWER="$OSTYPE"
+IS_WSL=false
+grep -qi microsoft /proc/version 2>/dev/null && IS_WSL=true
+IS_MSYS=false
+[[ "$OSTYPE_LOWER" == msys* || "$OSTYPE_LOWER" == cygwin* ]] && IS_MSYS=true
+IS_MAC=false
+[[ "$OSTYPE_LOWER" == darwin* ]] && IS_MAC=true
+IS_LINUX=false
+[[ "$OSTYPE_LOWER" == linux* ]] && IS_LINUX=true
+IS_WINDOWS_NATIVE=false
+[[ -n "${WINDIR:-}" ]] && IS_WINDOWS_NATIVE=true
+
+detect_powershell(){
+  local ps=""
+  for c in powershell.exe pwsh.exe "/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"; do
+    command -v "$c" &>/dev/null && { ps="$c"; break; }
+  done
+  echo "$ps"
+}
+POWERSHELL_CMD=$(detect_powershell)
+
+windows_path(){
+  # Convert a POSIX path to Windows style if possible
+  local p="$1"
+  if command -v cygpath &>/dev/null; then
+    cygpath -w "$p"
   else
-    echo "Error: No download tool available (curl, wget, or PowerShell)"
+    # crude fallback: /c/Users/name -> C:\Users\name
+    if [[ "$p" =~ ^/([a-zA-Z])/(.*)$ ]]; then
+      local drive="${BASH_REMATCH[1]^^}" rest="${BASH_REMATCH[2]}"
+      echo "${drive}:\\${rest//\//\\}"
+    else
+      echo "$p"
+    fi
+  fi
+}
+
+# -------- Download Helper --------
+download_file(){
+  local url="$1" out="$2"
+  if command -v curl &>/dev/null; then
+    curl -sSfL "$url" -o "$out" || return 1
+  elif command -v wget &>/dev/null; then
+    wget -q "$url" -O "$out" || return 1
+  elif [[ -n "$POWERSHELL_CMD" ]]; then
+    local win_out=$(windows_path "$out")
+    "$POWERSHELL_CMD" -Command "\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$win_out'" || return 1
+  else
     return 1
   fi
 }
 
-# Check if gitleaks is already installed
-if command -v gitleaks &> /dev/null; then
-    echo "Gitleaks is already installed."
-else
-  echo "Installing Gitleaks..."
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-      brew install gitleaks
-  elif [[ "$OSTYPE" == "linux-gnu"* ]] || [[ "$OSTYPE" == "msys" ]]; then
-      # Detect architecture
-      ARCH=$(uname -m)
-      case "$ARCH" in
-        x86_64)
-          ARCH="x64"
-          ;;
-        aarch64|arm64)
-          ARCH="arm64"
-          ;;
-        *)
-          echo "Unsupported architecture: $ARCH"
-          exit 1
-          ;;
-      esac
-      
-      # Detect OS
-      if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        OS="linux"
-        INSTALL_DIR="$HOME/.local/bin"
-      else
-        OS="windows"
-        INSTALL_DIR="$HOME/bin"
-      fi
-      
-      # Get latest release version - prioritize PowerShell on Windows
-      if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-        # On Git Bash/Windows, use PowerShell first
-        echo "Using PowerShell to fetch latest version..."
-        LATEST_VERSION=$($POWERSHELL_CMD -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/gitleaks/gitleaks/releases/latest').tag_name" 2>/dev/null | tr -d '\r')
-      elif command -v curl &> /dev/null; then
-        LATEST_VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-      elif command -v wget &> /dev/null; then
-        LATEST_VERSION=$(wget -qO- https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-      elif [[ -n "$POWERSHELL_CMD" ]]; then
-        # Use PowerShell on Windows as fallback
-        echo "Using PowerShell to fetch latest version..."
-        LATEST_VERSION=$($POWERSHELL_CMD -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/gitleaks/gitleaks/releases/latest').tag_name" 2>/dev/null | tr -d '\r')
-      else
-        echo "Error: No tool available to download files (curl, wget, or PowerShell)."
-        echo "Please install curl or wget, or install gitleaks manually from: https://github.com/gitleaks/gitleaks/releases"
-        exit 1
-      fi
-      
-      if [ -z "$LATEST_VERSION" ]; then
-        echo "Failed to get latest Gitleaks version"
-        exit 1
-      fi
-      
-      echo "Downloading Gitleaks $LATEST_VERSION..."
-      
-      # Download and install
-      mkdir -p "$INSTALL_DIR"
-      
-      if [[ "$OS" == "windows" ]]; then
-        download_file "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_${OS}_${ARCH}.zip" /tmp/gitleaks.zip
-        unzip -o -q /tmp/gitleaks.zip -d /tmp/ gitleaks.exe 2>/dev/null || {
-          # Try with Windows temp if /tmp fails
-          WIN_TEMP=$($POWERSHELL_CMD -Command "Write-Output \$env:TEMP" 2>/dev/null | tr -d '\r' | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
-          if [[ -n "$WIN_TEMP" ]]; then
-            unzip -o -q "$WIN_TEMP/gitleaks.zip" -d "$WIN_TEMP/" gitleaks.exe
-            mv "$WIN_TEMP/gitleaks.exe" "$INSTALL_DIR/"
-            rm "$WIN_TEMP/gitleaks.zip" 2>/dev/null || true
-          fi
-        }
-        # If unzip succeeded in /tmp, move from there
-        if [[ -f /tmp/gitleaks.exe ]]; then
-          mv /tmp/gitleaks.exe "$INSTALL_DIR/"
-          rm /tmp/gitleaks.zip 2>/dev/null || true
-        fi
-      else
-        download_file "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_${OS}_${ARCH}.tar.gz" /tmp/gitleaks.tar.gz
-        tar -xzf /tmp/gitleaks.tar.gz -C /tmp/
-        mv /tmp/gitleaks "$INSTALL_DIR/"
-        chmod +x "$INSTALL_DIR/gitleaks"
-        rm /tmp/gitleaks.tar.gz
-      fi
-      
-      # Add to PATH if not already there
-      if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-        echo "export PATH=\"\$PATH:$INSTALL_DIR\"" >> ~/.bashrc
-        export PATH="$PATH:$INSTALL_DIR"
-      fi
+# -------- Install Gitleaks (if missing) --------
+install_gitleaks(){
+  if command -v gitleaks &>/dev/null; then
+    log "Gitleaks already present: $(command -v gitleaks)"
+    return 0
+  fi
+  log "Installing gitleaks..."
+  local arch="$(uname -m)"; case "$arch" in x86_64) arch="x64";; aarch64|arm64) arch="arm64";; *) die "Unsupported arch: $arch";; esac
+  local latest=""
+  if [[ -n "$POWERSHELL_CMD" && ( $IS_MSYS == true || $IS_WINDOWS_NATIVE == true ) ]]; then
+    latest=$($POWERSHELL_CMD -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/gitleaks/gitleaks/releases/latest').tag_name" 2>/dev/null | tr -d '\r')
+  elif command -v curl &>/dev/null; then
+    latest=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^\"]+)".*/\1/')
+  elif command -v wget &>/dev/null; then
+    latest=$(wget -qO- https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^\"]+)".*/\1/')
+  fi
+  [[ -z "$latest" ]] && die "Unable to fetch latest gitleaks release tag"
+  local os_pkg="" install_dir="" bin_name="gitleaks"
+  if $IS_MAC; then os_pkg="darwin"; install_dir="$HOME/.local/bin";
+  elif $IS_LINUX && ! $IS_MSYS; then os_pkg="linux"; install_dir="$HOME/.local/bin";
+  else os_pkg="windows"; install_dir="$HOME/bin"; bin_name="gitleaks.exe"; fi
+  mkdir -p "$install_dir"
+  if [[ "$os_pkg" == windows ]]; then
+    download_file "https://github.com/gitleaks/gitleaks/releases/download/${latest}/gitleaks_${latest#v}_${os_pkg}_${arch}.zip" /tmp/gitleaks.zip || die "Download failed"
+    unzip -qo /tmp/gitleaks.zip gitleaks.exe -d /tmp || die "Unzip failed"
+    mv /tmp/gitleaks.exe "$install_dir/" || die "Move failed"
+    rm -f /tmp/gitleaks.zip
   else
-      echo "Unsupported OS type: $OSTYPE"
-      exit 1
+    download_file "https://github.com/gitleaks/gitleaks/releases/download/${latest}/gitleaks_${latest#v}_${os_pkg}_${arch}.tar.gz" /tmp/gitleaks.tgz || die "Download failed"
+    tar -xzf /tmp/gitleaks.tgz -C /tmp || die "Extract failed"
+    mv /tmp/gitleaks "$install_dir/" || die "Move failed"
+    chmod +x "$install_dir/gitleaks"
+    rm -f /tmp/gitleaks.tgz
   fi
-  
-  if ! command -v gitleaks &> /dev/null; then
-      echo "Gitleaks installation failed, sorry! Please check your internet connection or try installing manually from https://github.com/gitleaks/gitleaks/releases"
-      exit 1
+  [[ ":$PATH:" != *":$install_dir:"* ]] && export PATH="$PATH:$install_dir"
+  command -v gitleaks &>/dev/null || die "gitleaks not found after install"
+  log "Installed gitleaks ${latest} to $install_dir/$bin_name"
+}
+
+# -------- Configure hooks path --------
+configure_hooks_path(){
+  local hooks_dir="$HOME/.git-hooks"
+  mkdir -p "$hooks_dir"
+  local win_path="$(windows_path "$hooks_dir")"
+  local target="$hooks_dir"
+  # Prefer Windows style if running in Git Bash or Windows native so PowerShell/CMD commits trigger hook.
+  if $IS_MSYS || $IS_WINDOWS_NATIVE; then target="$win_path"; fi
+  if command -v git.exe &>/dev/null && ($IS_MSYS || $IS_WINDOWS_NATIVE); then
+    git.exe config --global core.hooksPath "$target" || warn "git.exe config failed"
+  else
+    git config --global core.hooksPath "$target" || warn "git config failed"
   fi
-  
-  echo "Gitleaks installed successfully!"
-fi
+  local confirm="$(git config --global core.hooksPath 2>/dev/null || true)"
+  if [[ -z "$confirm" ]]; then warn "hooksPath not readable after set"; else log "hooksPath set to: $confirm"; fi
+}
 
-GITLEAKS_CMD=$(which gitleaks)
-echo "Gitleaks installed at $GITLEAKS_CMD"
-
-# Determine if we're running in a Windows environment (Git Bash, WSL, etc.)
-IS_WINDOWS=false
-if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]] || [[ -n "$WINDIR" ]]; then
-  IS_WINDOWS=true
-fi
-
-# Setup for bash/WSL environment
-echo "Creating .git-hooks directory..."
-mkdir -p ~/.git-hooks
-echo ".git-hooks directory created."
-
-echo "Configuring git to use custom hooks path..."
-# Determine POSIX and Windows style paths for the hooks dir so Git works from both PowerShell/CMD and Git Bash
-HOOKS_PATH_POSIX="$HOME/.git-hooks"
-if command -v cygpath &> /dev/null; then
-  HOOKS_PATH_WIN=$(cygpath -w "$HOOKS_PATH_POSIX")\\  # cygpath outputs without trailing backslash; add one for consistency then remove double
-  HOOKS_PATH_WIN="${HOOKS_PATH_WIN%\\}"
-else
-  # Fallback attempt: translate /c/Users/name to C:/Users/name
-  HOOKS_PATH_WIN="${HOOKS_PATH_POSIX#/c/}"; HOOKS_PATH_WIN="C:/${HOOKS_PATH_WIN}"; HOOKS_PATH_WIN="${HOOKS_PATH_WIN//\//\\}"
-fi
-
-# Normalize Windows path to avoid mixed slashes
-HOOKS_PATH_WIN_NORMALIZED="${HOOKS_PATH_WIN//\//\\}"
-
-# Use Windows path for git config to ensure PowerShell/CMD commits trigger the hook; Git Bash will accept it too.
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-  GIT_EXE_PATH="C:\\Program Files\\Git\\cmd\\git.exe"
-  $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH_WIN_NORMALIZED'" 2>/dev/null
-  sleep 0.5
-  VERIFY=$($POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath" 2>/dev/null | tr -d '\r')
-  if [[ "$VERIFY" != "$HOOKS_PATH_WIN_NORMALIZED" ]]; then
-    echo "Warning: PowerShell config set failed (got '$VERIFY'). Retrying via git.exe directly..."
-    "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH_WIN_NORMALIZED" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH_WIN_NORMALIZED"
+# -------- Write configuration files --------
+write_config_files(){
+  local rules_url="https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/main/gitleaks-custom-rules.toml"
+  if download_file "$rules_url" "$HOME/.gitleaks-custom-rules.toml"; then
+    log "Custom rules downloaded to ~/.gitleaks-custom-rules.toml"
+  else
+    warn "Failed to download custom rules; creating template"
+    cat > "$HOME/.gitleaks-custom-rules.toml" <<'TEMPLATE'
+# Custom Gitleaks Rules Template
+# Add [[rules]] blocks below and re-run installer or append to ~/.gitleaks.toml manually.
+TEMPLATE
   fi
-elif command -v git.exe &> /dev/null; then
-  git.exe config --global core.hooksPath "$HOOKS_PATH_WIN_NORMALIZED"
-elif command -v git &> /dev/null; then
-  git config --global core.hooksPath "$HOOKS_PATH_POSIX"
-fi
-echo "Git hooks path configured: $(git config --global core.hooksPath 2>/dev/null || echo "(unreadable)")"
-
-echo "Downloading custom rules file from GitHub..."
-CUSTOM_RULES_URL="https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/main/gitleaks-custom-rules.toml"
-
-# Try to download the custom rules file
-if download_file "$CUSTOM_RULES_URL" ~/.gitleaks-custom-rules.toml; then
-  echo "Custom rules file downloaded successfully to ~/.gitleaks-custom-rules.toml"
-else
-  echo "Warning: Failed to download custom rules file from GitHub"
-  echo "Creating basic custom rules template as fallback..."
-  cat << 'EOFCUSTOM' > ~/.gitleaks-custom-rules.toml
-# Custom Gitleaks Rules
-# This file contains additional detection rules beyond the default gitleaks rules
-# After editing this file, re-run the installation script to regenerate ~/.gitleaks.toml
-
-# Add your custom rules below this line
-# Example template:
-# [[rules]]
-# id = "my-custom-rule"
-# description = "Description of what this rule detects"
-# regex = '''your-regex-pattern-here'''
-# tags = ["tag1", "tag2"]
-EOFCUSTOM
-  echo "Basic custom rules template created at ~/.gitleaks-custom-rules.toml"
-fi
-
-echo "Creating global gitleaks configuration..."
-cat << 'EOFCONFIG' > ~/.gitleaks.toml
-# Global Gitleaks Configuration
-# This file uses the default gitleaks rules plus custom rules defined below
-
+  cat > "$HOME/.gitleaks.toml" <<'BASECFG'
+# Global Gitleaks Configuration (extends defaults + custom rules)
 [extend]
-# Use the default gitleaks rules as a base
 useDefault = true
+# Custom rules appended below:
+BASECFG
+  cat "$HOME/.gitleaks-custom-rules.toml" >> "$HOME/.gitleaks.toml"
+  log "Global config written to ~/.gitleaks.toml"
+}
 
-# ============================================================================
-# CUSTOM RULES SECTION
-# ============================================================================
-# The rules below are loaded from ~/.gitleaks-custom-rules.toml
-# To add or modify custom rules, edit ~/.gitleaks-custom-rules.toml
-# Then re-run the installation script or manually append the rules here
-# ============================================================================
-
-EOFCONFIG
-
-# Append custom rules to the main config
-cat ~/.gitleaks-custom-rules.toml >> ~/.gitleaks.toml
-
-echo "Global gitleaks configuration created at ~/.gitleaks.toml (includes custom rules)"
-
-echo "Writing pre-commit hook file..."
-
-# For Windows environments, create a batch file that works from PowerShell/CMD
-if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ -n "$POWERSHELL_CMD" ]]; then
-  # Create Windows batch file as primary hook
-  cat << 'EOFBAT' > ~/.git-hooks/pre-commit.bat
+# -------- Write hooks --------
+write_hooks(){
+  local hooks_dir="$HOME/.git-hooks"
+  mkdir -p "$hooks_dir"
+  # Bash hook (primary for POSIX & also invoked by .bat on Windows)
+  cat > "$hooks_dir/pre-commit" <<'BASHHOOK'
+#!/bin/sh
+GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [ -n "$GIT_ROOT" ] && [ -f "$GIT_ROOT/.gitleaks.toml" ]; then
+  CONFIG_FLAG="--config=$GIT_ROOT/.gitleaks.toml"
+elif [ -f "$HOME/.gitleaks.toml" ]; then
+  CONFIG_FLAG="--config=$HOME/.gitleaks.toml"
+else
+  CONFIG_FLAG=""
+fi
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect -v --staged $CONFIG_FLAG
+elif command -v gitleaks.exe >/dev/null 2>&1; then
+  gitleaks.exe protect -v --staged $CONFIG_FLAG
+else
+  echo "gitleaks not found; install it before committing" >&2
+  exit 1
+fi
+BASHHOOK
+  chmod +x "$hooks_dir/pre-commit"
+  # Windows batch wrapper if on MSYS/Windows native (Git uses .bat when present)
+  if $IS_MSYS || $IS_WINDOWS_NATIVE; then
+    cat > "$hooks_dir/pre-commit.bat" <<'BATHOOK'
 @echo off
-REM Git pre-commit hook - runs gitleaks to detect secrets
-
-REM Get the git repository root
+REM Windows pre-commit wrapper invoking bash version
 for /f "delims=" %%i in ('git rev-parse --show-toplevel') do set GIT_ROOT=%%i
-
-REM Check for repository-specific config, then global config
-if exist "%GIT_ROOT%\.gitleaks.toml" (
-    set CONFIG_FLAG=--config=%GIT_ROOT%\.gitleaks.toml
-) else if exist "%USERPROFILE%\.gitleaks.toml" (
-    set CONFIG_FLAG=--config=%USERPROFILE%\.gitleaks.toml
-) else (
-    set CONFIG_FLAG=
-)
-
-REM Run gitleaks
-where gitleaks.exe >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    gitleaks.exe protect -v --staged %CONFIG_FLAG%
-    exit /b %ERRORLEVEL%
-)
-
-where gitleaks >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    gitleaks protect -v --staged %CONFIG_FLAG%
-    exit /b %ERRORLEVEL%
-)
-
-echo Error: gitleaks not found in PATH
-echo Please ensure gitleaks is installed and accessible from your terminal
-exit /b 1
-EOFBAT
-
-  # Also create bash version for Git Bash compatibility
-  cat << 'EOFBASH' > ~/.git-hooks/pre-commit
-#!/bin/sh
-
-# Get the root directory of the git repository
-GIT_ROOT=$(git rev-parse --show-toplevel)
-
-# Priority: Repository config > Global config
-if [ -f "$GIT_ROOT/.gitleaks.toml" ]; then
-    CONFIG_FLAG="--config=$GIT_ROOT/.gitleaks.toml"
-elif [ -f "$HOME/.gitleaks.toml" ]; then
-    CONFIG_FLAG="--config=$HOME/.gitleaks.toml"
-else
-    CONFIG_FLAG=""
-fi
-
-# Try to run gitleaks from PATH first (works in both WSL and Windows)
-if command -v gitleaks > /dev/null 2>&1; then
-    gitleaks protect -v --staged $CONFIG_FLAG
-elif command -v gitleaks.exe > /dev/null 2>&1; then
-    gitleaks.exe protect -v --staged $CONFIG_FLAG
-else
-    echo "Error: gitleaks not found in PATH"
-    echo "Please ensure gitleaks is installed and accessible from your terminal"
-    exit 1
-fi
-EOFBASH
-
-  echo "pre-commit files created (both .bat and bash versions)."
-else
-  # For Linux/Mac, create standard bash hook
-  cat << 'EOF' > ~/.git-hooks/pre-commit
-#!/bin/sh
-
-# Get the root directory of the git repository
-GIT_ROOT=$(git rev-parse --show-toplevel)
-
-# Priority: Repository config > Global config
-if [ -f "$GIT_ROOT/.gitleaks.toml" ]; then
-    CONFIG_FLAG="--config=$GIT_ROOT/.gitleaks.toml"
-elif [ -f "$HOME/.gitleaks.toml" ]; then
-    CONFIG_FLAG="--config=$HOME/.gitleaks.toml"
-else
-    CONFIG_FLAG=""
-fi
-
-# Try to run gitleaks from PATH first (works in both WSL and Windows)
-if command -v gitleaks > /dev/null 2>&1; then
-    gitleaks protect -v --staged $CONFIG_FLAG
-elif command -v gitleaks.exe > /dev/null 2>&1; then
-    gitleaks.exe protect -v --staged $CONFIG_FLAG
-else
-    echo "Error: gitleaks not found in PATH"
-    echo "Please ensure gitleaks is installed and accessible from your terminal"
-    exit 1
-fi
-EOF
-  echo "pre-commit file created."
-fi
-
-echo "Setting pre-commit file as executable..."
-chmod +x ~/.git-hooks/pre-commit
-echo "pre-commit file is now executable."
-
-# Additional setup for Windows Git (if applicable)
-if [[ "$IS_WINDOWS" == "true" ]] || [[ -n "$POWERSHELL_CMD" ]] || command -v cmd.exe &> /dev/null; then
-  echo ""
-  echo "Detected Windows environment. Setting up for Windows Git..."
-  
-  # Ensure POWERSHELL_CMD is set if not already
-  if [[ -z "$POWERSHELL_CMD" ]]; then
-    if command -v powershell.exe &> /dev/null; then
-      POWERSHELL_CMD="powershell.exe"
-    elif command -v pwsh.exe &> /dev/null; then
-      POWERSHELL_CMD="pwsh.exe"
-    elif [[ -f "/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
-      POWERSHELL_CMD="/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-    elif [[ -f "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]]; then
-      POWERSHELL_CMD="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-    fi
+bash "%~dp0pre-commit"
+exit /b %ERRORLEVEL%
+BATHOOK
   fi
-  
-  # Check if gitleaks.exe is available in Windows
-  if command -v gitleaks.exe &> /dev/null; then
-    echo "Gitleaks is already installed in Windows."
-  else
-    echo "Installing Gitleaks for Windows..."
-    
-    # Get latest release version
-    if [[ "$OSTYPE" == "msys" ]] && [[ -n "$POWERSHELL_CMD" ]]; then
-      LATEST_VERSION=$($POWERSHELL_CMD -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/gitleaks/gitleaks/releases/latest').tag_name" 2>/dev/null | tr -d '\r')
-    elif command -v curl &> /dev/null; then
-      LATEST_VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    elif command -v wget &> /dev/null; then
-      LATEST_VERSION=$(wget -qO- https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    elif [[ -n "$POWERSHELL_CMD" ]]; then
-      LATEST_VERSION=$($POWERSHELL_CMD -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/gitleaks/gitleaks/releases/latest').tag_name" 2>/dev/null | tr -d '\r')
-    else
-      LATEST_VERSION=""
-    fi
-    
-    if [ -z "$LATEST_VERSION" ]; then
-      echo "Warning: Failed to get latest Gitleaks version for Windows"
-      echo "Please install gitleaks manually from: https://github.com/gitleaks/gitleaks/releases"
-    else
-      # Determine Windows user directory
-      if command -v wslpath &> /dev/null; then
-        # We're in WSL - install to Windows user's directory
-        WIN_USER_PROFILE=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r' | sed 's/\\/\//g' | sed 's/C:/\/mnt\/c/')
-        WIN_INSTALL_DIR="$WIN_USER_PROFILE/bin"
-      else
-        # We're in Git Bash
-        WIN_INSTALL_DIR="$USERPROFILE/bin"
-      fi
-      
-      mkdir -p "$WIN_INSTALL_DIR"
-      mkdir -p /tmp 2>/dev/null || true
-      
-      echo "Downloading Gitleaks $LATEST_VERSION for Windows..."
-      if command -v curl &> /dev/null; then
-        curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip" -o /tmp/gitleaks-win.zip
-      elif command -v wget &> /dev/null; then
-        wget -q "https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip" -O /tmp/gitleaks-win.zip
-      elif [[ -n "$POWERSHELL_CMD" ]]; then
-        $POWERSHELL_CMD -Command "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/gitleaks/gitleaks/releases/download/${LATEST_VERSION}/gitleaks_${LATEST_VERSION#v}_windows_x64.zip' -OutFile '/tmp/gitleaks-win.zip'" 2>/dev/null
-      fi
-      
-      if [[ -f /tmp/gitleaks-win.zip ]]; then
-        mkdir -p /tmp/gitleaks-win
-        unzip -q /tmp/gitleaks-win.zip -d /tmp/gitleaks-win/
-        mv /tmp/gitleaks-win/gitleaks.exe "$WIN_INSTALL_DIR/" 2>/dev/null || cp /tmp/gitleaks-win/gitleaks.exe "$WIN_INSTALL_DIR/"
-        rm -rf /tmp/gitleaks-win.zip /tmp/gitleaks-win/
-      else
-        echo "Warning: Failed to download gitleaks for Windows"
-      fi
-      
-      echo "Gitleaks installed to Windows at: $WIN_INSTALL_DIR/gitleaks.exe"
-      echo "Note: You may need to add %USERPROFILE%\\bin to your Windows PATH"
-    fi
-  fi
-  
-  # Configure git hooks path based on environment
-  if command -v wslpath &> /dev/null; then
-    # We're in WSL - need to configure Windows Git separately
-    WINDOWS_HOOKS_PATH=$(wslpath -w ~/.git-hooks)
-    
-    if command -v git.exe &> /dev/null; then
-      git.exe config --global core.hooksPath "$WINDOWS_HOOKS_PATH"
-      echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
-    elif command -v powershell.exe &> /dev/null; then
-      powershell.exe -Command "git config --global core.hooksPath '$WINDOWS_HOOKS_PATH'"
-      echo "Windows Git hooks path configured at: $WINDOWS_HOOKS_PATH"
-    fi
-  else
-    # Git Bash / MSYS path correction: ensure global config uses Windows style for PowerShell commits
-    HOOKS_PATH_POSIX="$HOME/.git-hooks"
-    if command -v cygpath &> /dev/null; then
-      HOOKS_PATH_WIN=$(cygpath -w "$HOOKS_PATH_POSIX")
-    else
-      HOOKS_PATH_WIN="${HOOKS_PATH_POSIX#/c/}"; HOOKS_PATH_WIN="C:/${HOOKS_PATH_WIN}"; HOOKS_PATH_WIN="${HOOKS_PATH_WIN//\//\\}"
-    fi
-    GIT_EXE_PATH="C:\\Program Files\\Git\\cmd\\git.exe"
-    if [[ -n "$POWERSHELL_CMD" ]]; then
-      $POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath '$HOOKS_PATH_WIN'"
-      sleep 0.5
-      VERIFY_PATH=$($POWERSHELL_CMD -Command "& '$GIT_EXE_PATH' config --global core.hooksPath" 2>/dev/null | tr -d '\r')
-      if [[ "$VERIFY_PATH" != "$HOOKS_PATH_WIN" ]]; then
-        echo "Warning: PowerShell method failed (value '$VERIFY_PATH'), retrying via git.exe..."
-        "/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath "$HOOKS_PATH_WIN" 2>/dev/null || git config --global core.hooksPath "$HOOKS_PATH_WIN"
-        VERIFY_PATH=$("/c/Program Files/Git/cmd/git.exe" config --global core.hooksPath 2>/dev/null || git config --global core.hooksPath || echo "$HOOKS_PATH_WIN")
-      fi
-    elif command -v git.exe &> /dev/null; then
-      git.exe config --global core.hooksPath "$HOOKS_PATH_WIN"
-      VERIFY_PATH=$(git.exe config --global core.hooksPath 2>/dev/null || echo "")
-    elif command -v git &> /dev/null; then
-      git config --global core.hooksPath "$HOOKS_PATH_WIN"
-      VERIFY_PATH=$(git config --global core.hooksPath || echo "")
-    fi
-    echo "Git Bash/MSYS environment - hooks path verified and set to: ${VERIFY_PATH:-$HOOKS_PATH}"
-  fi
-fi
+  log "Hooks written to $hooks_dir"
+}
 
-echo ""
-echo "Script ran successfully!"
-echo ""
-echo "Note: If you use Git from both WSL and Windows, the hook should now work in both environments."
+# -------- Optional: Configure Windows Git from WSL --------
+configure_windows_git_from_wsl(){
+  $IS_WSL || return 0
+  command -v git.exe &>/dev/null || return 0
+  local win_hooks="$(windows_path "$HOME/.git-hooks")"
+  git.exe config --global core.hooksPath "$win_hooks" || warn "Failed to set Windows hooksPath from WSL"
+  log "Windows Git hooksPath (from WSL) => $(git.exe config --global core.hooksPath 2>/dev/null || echo 'unknown')"
+}
+
+# ------------------ Main Flow ------------------
+log "Starting gitleaks global hook installation"
+install_gitleaks
+configure_hooks_path
+write_config_files
+write_hooks
+configure_windows_git_from_wsl
+log "Installation complete. Test with: echo 'slack_token=xoxb-123...123' > fake_secret.txt && git add fake_secret.txt && git commit -m 'test'"
+
+exit 0
