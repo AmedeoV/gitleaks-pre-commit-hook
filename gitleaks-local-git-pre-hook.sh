@@ -16,7 +16,12 @@ log(){ printf "[gitleaks-install] %s\n" "$*"; }
 warn(){ printf "[gitleaks-install][WARN] %s\n" "$*"; }
 die(){ printf "[gitleaks-install][ERROR] %s\n" "$*"; exit 1; }
 
-OSTYPE_LOWER="${OSTYPE,,}" 2>/dev/null || OSTYPE_LOWER="$OSTYPE"
+# Prevent running as root/sudo
+if [[ "$EUID" -eq 0 ]] || [[ -n "${SUDO_USER:-}" ]]; then
+  die "Do not run this script with sudo. Run as your regular user."
+fi
+
+OSTYPE_LOWER="$(echo "$OSTYPE" | tr '[:upper:]' '[:lower:]')"
 IS_WSL=false
 grep -qi microsoft /proc/version 2>/dev/null && IS_WSL=true
 IS_MSYS=false
@@ -76,6 +81,18 @@ install_gitleaks(){
   fi
   log "Installing gitleaks..."
   
+  # On macOS, use Homebrew
+  if $IS_MAC; then
+    if command -v brew &>/dev/null; then
+      log "Using Homebrew to install gitleaks..."
+      brew install gitleaks || die "Homebrew install failed"
+      log "Gitleaks installed via Homebrew"
+      return 0
+    else
+      die "Homebrew not found. Please install Homebrew first: https://brew.sh"
+    fi
+  fi
+  
   # On Windows, prefer winget if available and install to ~/bin
   if [[ $IS_MSYS == true || $IS_WINDOWS_NATIVE == true ]]; then
     if command -v winget.exe &>/dev/null || command -v winget &>/dev/null; then
@@ -95,7 +112,7 @@ install_gitleaks(){
     fi
   fi
   
-  # Fallback to manual installation
+  # Fallback to manual installation for Linux
   local arch="$(uname -m)"; case "$arch" in x86_64) arch="x64";; aarch64|arm64) arch="arm64";; *) die "Unsupported arch: $arch";; esac
   local latest=""
   if [[ -n "$POWERSHELL_CMD" && ( $IS_MSYS == true || $IS_WINDOWS_NATIVE == true ) ]]; then
@@ -107,9 +124,14 @@ install_gitleaks(){
   fi
   [[ -z "$latest" ]] && die "Unable to fetch latest gitleaks release tag"
   local os_pkg="" install_dir="" bin_name="gitleaks"
-  if $IS_MAC; then os_pkg="darwin"; install_dir="$HOME/.local/bin";
-  elif $IS_LINUX && ! $IS_MSYS; then os_pkg="linux"; install_dir="$HOME/.local/bin";
-  else os_pkg="windows"; install_dir="$HOME/bin"; bin_name="gitleaks.exe"; fi
+  if $IS_LINUX && ! $IS_MSYS; then
+    os_pkg="linux"
+    install_dir="$HOME/.local/bin"
+  else
+    os_pkg="windows"
+    install_dir="$HOME/bin"
+    bin_name="gitleaks.exe"
+  fi
   mkdir -p "$install_dir"
   if [[ "$os_pkg" == windows ]]; then
     download_file "https://github.com/gitleaks/gitleaks/releases/download/${latest}/gitleaks_${latest#v}_${os_pkg}_${arch}.zip" /tmp/gitleaks.zip || die "Download failed"
@@ -164,29 +186,61 @@ configure_hooks_path(){
 
 # -------- Write configuration files --------
 write_config_files(){
-  local rules_url="https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/main/gitleaks-custom-rules.toml"
-  if download_file "$rules_url" "$HOME/.gitleaks-custom-rules.toml"; then
-    log "Custom rules downloaded to ~/.gitleaks-custom-rules.toml"
+  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local local_rules="https://raw.githubusercontent.com/AmedeoV/gitleaks-pre-commit-hook/main/gitleaks-custom-rules.toml"
+  
+  # Check if files exist and are writable, attempt to remove if owned by root
+  for file in "$HOME/.gitleaks-custom-rules.toml" "$HOME/.gitleaks.toml"; do
+    if [[ -f "$file" ]] && [[ ! -w "$file" ]]; then
+      warn "File $file exists but is not writable (may be owned by root)"
+      log "Attempting to remove with sudo..."
+      if sudo rm -f "$file" 2>/dev/null; then
+        log "Successfully removed $file"
+      else
+        warn "Failed to remove $file automatically"
+        warn "Please remove it manually: sudo rm $file"
+        die "Cannot write to $file - permission denied"
+      fi
+    fi
+  done
+  
+  if [[ -f "$local_rules" ]]; then
+    cp "$local_rules" "$HOME/.gitleaks-custom-rules.toml" || die "Failed to copy custom rules"
+    log "Custom rules copied from local file to ~/.gitleaks-custom-rules.toml"
   else
-    warn "Failed to download custom rules; creating template"
-    cat > "$HOME/.gitleaks-custom-rules.toml" <<'TEMPLATE'
+    warn "Local custom rules file not found at $local_rules; creating template"
+    cat > "$HOME/.gitleaks-custom-rules.toml" <<'TEMPLATE' || die "Failed to create custom rules template"
 # Custom Gitleaks Rules Template
 # Add [[rules]] blocks below and re-run installer or append to ~/.gitleaks.toml manually.
 TEMPLATE
   fi
-  cat > "$HOME/.gitleaks.toml" <<'BASECFG'
+  cat > "$HOME/.gitleaks.toml" <<'BASECFG' || die "Failed to create gitleaks config"
 # Global Gitleaks Configuration (extends defaults + custom rules)
 [extend]
 useDefault = true
 # Custom rules appended below:
 BASECFG
-  cat "$HOME/.gitleaks-custom-rules.toml" >> "$HOME/.gitleaks.toml"
+  cat "$HOME/.gitleaks-custom-rules.toml" >> "$HOME/.gitleaks.toml" || die "Failed to append custom rules"
   log "Global config written to ~/.gitleaks.toml"
 }
 
 # -------- Write hooks --------
 write_hooks(){
   local hooks_dir="$HOME/.git-hooks"
+  
+  # Check if hooks directory exists but is not writable
+  if [[ -d "$hooks_dir" ]] && [[ ! -w "$hooks_dir" ]]; then
+    warn "Directory $hooks_dir exists but is not writable (may be owned by root)"
+    log "Attempting to fix ownership with sudo..."
+    if sudo chown -R "$USER" "$hooks_dir" 2>/dev/null; then
+      log "Successfully fixed ownership of $hooks_dir"
+    else
+      warn "Failed to fix ownership automatically"
+      warn "Please fix manually: sudo chown -R \$USER $hooks_dir"
+      die "Cannot write to $hooks_dir - permission denied"
+    fi
+  fi
+  
   mkdir -p "$hooks_dir"
   # Bash hook (primary for POSIX & also invoked by .bat on Windows)
   cat > "$hooks_dir/pre-commit" <<'BASHHOOK'
@@ -238,6 +292,6 @@ configure_hooks_path
 write_config_files
 write_hooks
 configure_windows_git_from_wsl
-log "Installation complete. Test with: echo 'slack_token=xoxb-123...123' > fake_secret.txt && git add fake_secret.txt && git commit -m 'test'"
+log "Installation complete. Test with: echo 'slack_token=xoxb-1234567890-1234567890123-AbCdEfGh1234567890123456' > fake_secret.txt && git add fake_secret.txt && git commit -m 'test'"
 
 exit 0
